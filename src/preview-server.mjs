@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Local preview server for equirect MP4.
+ * Local preview server for equirect MP4 + shared presets API.
  *
  *   node src/preview-server.mjs --video path/to/equirect.mp4
  *   → http://127.0.0.1:8787/
@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { loadPresetsDoc, savePresetsDoc, updatePreset, PRESETS_PATH } from './presets.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -33,8 +34,25 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json',
   '.mp4': 'video/mp4',
-  '.svg': 'image/svg+xml',
 };
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+function json(res, code, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  res.end(body);
+}
 
 function sendFile(res, filePath, req) {
   if (!fs.existsSync(filePath)) {
@@ -45,7 +63,6 @@ function sendFile(res, filePath, req) {
   const ext = path.extname(filePath).toLowerCase();
   const type = MIME[ext] || 'application/octet-stream';
 
-  // Range support for video seeking
   const range = req.headers.range;
   if (range && ext === '.mp4') {
     const m = range.match(/bytes=(\d+)-(\d*)/);
@@ -89,37 +106,60 @@ if (!fs.existsSync(videoPath)) {
   process.exit(1);
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const method = req.method || 'GET';
 
-  if (url.pathname === '/' || url.pathname === '/index.html') {
-    sendFile(res, path.join(PREVIEW, 'index.html'), req);
-    return;
+  try {
+    if (url.pathname === '/api/presets' && method === 'GET') {
+      json(res, 200, { ...loadPresetsDoc(), path: PRESETS_PATH });
+      return;
+    }
+    if (url.pathname === '/api/presets' && method === 'PUT') {
+      const body = JSON.parse(await readBody(req));
+      const saved = savePresetsDoc(body);
+      json(res, 200, { ok: true, ...saved, path: PRESETS_PATH });
+      return;
+    }
+    if (url.pathname.startsWith('/api/presets/') && method === 'PUT') {
+      const name = decodeURIComponent(url.pathname.slice('/api/presets/'.length));
+      const body = JSON.parse(await readBody(req));
+      const saved = updatePreset(name, body);
+      json(res, 200, { ok: true, name, preset: saved.presets[name], path: PRESETS_PATH });
+      return;
+    }
+
+    if (url.pathname === '/' || url.pathname === '/index.html') {
+      sendFile(res, path.join(PREVIEW, 'index.html'), req);
+      return;
+    }
+    if (url.pathname.startsWith('/preview/')) {
+      sendFile(res, path.join(PREVIEW, url.pathname.slice('/preview/'.length)), req);
+      return;
+    }
+    if (url.pathname === '/media') {
+      sendFile(res, videoPath, req);
+      return;
+    }
+    if (url.pathname === '/api/info') {
+      json(res, 200, {
+        video: videoPath,
+        name: path.basename(videoPath),
+        size: fs.statSync(videoPath).size,
+        presetsPath: PRESETS_PATH,
+      });
+      return;
+    }
+    res.writeHead(404).end('Not found');
+  } catch (err) {
+    json(res, 500, { ok: false, error: String(err.message || err) });
   }
-  if (url.pathname.startsWith('/preview/')) {
-    const rel = url.pathname.slice('/preview/'.length);
-    sendFile(res, path.join(PREVIEW, rel), req);
-    return;
-  }
-  if (url.pathname === '/media') {
-    sendFile(res, videoPath, req);
-    return;
-  }
-  if (url.pathname === '/api/info') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      video: videoPath,
-      name: path.basename(videoPath),
-      size: fs.statSync(videoPath).size,
-    }));
-    return;
-  }
-  res.writeHead(404).end('Not found');
 });
 
 server.listen(opts.port, '127.0.0.1', () => {
   const url = `http://127.0.0.1:${opts.port}/`;
-  console.log(`Preview: ${url}`);
-  console.log(`Video:   ${videoPath}`);
+  console.log(`Preview:  ${url}`);
+  console.log(`Video:    ${videoPath}`);
+  console.log(`Presets:  ${PRESETS_PATH}`);
   if (opts.open) openBrowser(url);
 });

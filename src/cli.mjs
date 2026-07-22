@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_PRESETS, resolvePreset } from './presets.mjs';
+import { loadPresets, resolvePreset } from './presets.mjs';
 import { parseTimeline, resolveTimeline } from './timeline.mjs';
 import {
   probeDuration,
@@ -27,7 +27,7 @@ OPTIONS:
   --input, -i       Equirect MP4 (MediaSDK stitch)
   --output, -o      Flat MP4 output
   --preset, -p      Single preset for whole clip (default: forward)
-                    ${Object.keys(DEFAULT_PRESETS).join(' | ')}
+                    ${Object.keys(loadPresets()).join(' | ')}
   --timeline, -t    Segment list, e.g.
                     "0-90=forward,90-120=selfie,120-150=left,150-end=forward"
   --timeline-file   File with one segment per line
@@ -92,7 +92,7 @@ async function main() {
   const opts = parseArgs(process.argv);
   if (opts.help) { usage(); return; }
   if (opts.listPresets) {
-    for (const [k, v] of Object.entries(DEFAULT_PRESETS)) {
+    for (const [k, v] of Object.entries(loadPresets())) {
       console.log(`${k.padEnd(8)} yaw=${v.yaw} pitch=${v.pitch} h_fov=${v.h_fov}  — ${v.label}`);
     }
     return;

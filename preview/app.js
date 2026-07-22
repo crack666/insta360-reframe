@@ -1,15 +1,5 @@
 import * as THREE from 'three';
 
-/** Keep in sync with src/presets.mjs */
-const PRESETS = {
-  forward: { yaw: 0, pitch: -8, h_fov: 90, label: 'forward' },
-  selfie: { yaw: 180, pitch: 35, h_fov: 85, label: 'selfie' },
-  up: { yaw: 0, pitch: 55, h_fov: 85, label: 'up' },
-  left: { yaw: -90, pitch: -5, h_fov: 90, label: 'left' },
-  right: { yaw: 90, pitch: -5, h_fov: 90, label: 'right' },
-  back: { yaw: 180, pitch: -5, h_fov: 90, label: 'back' },
-};
-
 const deg = (d) => (d * Math.PI) / 180;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmtTime = (s) => {
@@ -22,6 +12,10 @@ const fmtTime = (s) => {
 const el = {
   view: document.getElementById('view'),
   presets: document.getElementById('presets'),
+  saveTarget: document.getElementById('saveTarget'),
+  savePreset: document.getElementById('savePreset'),
+  reloadPresets: document.getElementById('reloadPresets'),
+  presetPath: document.getElementById('presetPath'),
   yaw: document.getElementById('yaw'),
   pitch: document.getElementById('pitch'),
   fov: document.getElementById('fov'),
@@ -40,9 +34,12 @@ const el = {
   status: document.getElementById('status'),
 };
 
+/** @type {Record<string, {yaw:number,pitch:number,h_fov:number,v_fov?:number,roll?:number,label:string}>} */
+let PRESETS = {};
+
 const state = {
   yaw: 0,
-  pitch: -8,
+  pitch: 0,
   fov: 90,
   preset: 'forward',
   markIn: 0,
@@ -51,7 +48,6 @@ const state = {
   lastY: 0,
 };
 
-// --- Three.js equirect video sphere ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 el.view.appendChild(renderer.domElement);
@@ -65,21 +61,18 @@ video.crossOrigin = 'anonymous';
 video.playsInline = true;
 video.preload = 'auto';
 video.src = '/media';
-video.muted = true; // autoplay policies; unmute optional later
+video.muted = true;
 
 const texture = new THREE.VideoTexture(video);
 texture.colorSpace = THREE.SRGBColorSpace;
 texture.minFilter = THREE.LinearFilter;
 texture.magFilter = THREE.LinearFilter;
 
-// Inverted sphere: camera looks at inside of equirect map
 const geo = new THREE.SphereGeometry(50, 64, 32);
 geo.scale(-1, 1, 1);
-const mat = new THREE.MeshBasicMaterial({ map: texture });
-scene.add(new THREE.Mesh(geo, mat));
+scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: texture })));
 
 function applyLook() {
-  // Match ffmpeg v360-ish: yaw around Y, pitch around X
   camera.rotation.order = 'YXZ';
   camera.rotation.y = deg(-state.yaw);
   camera.rotation.x = deg(state.pitch);
@@ -119,6 +112,7 @@ function setPreset(name) {
   state.yaw = p.yaw;
   state.pitch = p.pitch;
   state.fov = p.h_fov;
+  if (el.saveTarget) el.saveTarget.value = name;
   applyLook();
 }
 
@@ -133,7 +127,7 @@ function updateCmd() {
   const base = 'node src/cli.mjs -i <equirect.mp4> -o flat.mp4';
   el.cmd.textContent = tl
     ? `${base} -t "${tl}"`
-    : `${base} -p ${state.preset} --yaw ${Math.round(state.yaw)} --pitch ${Math.round(state.pitch)} --fov ${Math.round(state.fov)}`;
+    : `${base} -p ${state.preset}`;
 }
 
 function nearestPresetName() {
@@ -146,28 +140,52 @@ function nearestPresetName() {
       best = name;
     }
   }
-  return bestDist < 25 ? best : `custom`;
+  return bestDist < 15 ? best : state.preset;
 }
 
 function addSegment(t0, t1) {
-  const name = nearestPresetName();
-  const preset = name === 'custom' ? state.preset : name;
-  // If custom far from presets, bake as forward with note — still use nearest named for CLI
-  const use = PRESETS[preset] ? preset : 'forward';
+  const use = nearestPresetName();
   const line = `${t0.toFixed(1)}-${t1.toFixed(1)}=${use}`;
   const cur = el.timeline.value.trim();
   el.timeline.value = cur ? `${cur.replace(/,?\s*$/, '')},\n${line}` : line;
   updateCmd();
 }
 
-// Preset buttons
-for (const [name, p] of Object.entries(PRESETS)) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.textContent = p.label;
-  b.dataset.preset = name;
-  b.addEventListener('click', () => setPreset(name));
-  el.presets.appendChild(b);
+function rebuildPresetUi() {
+  el.presets.innerHTML = '';
+  el.saveTarget.innerHTML = '';
+  for (const [name, p] of Object.entries(PRESETS)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = p.label || name;
+    b.title = `${name}: yaw=${p.yaw} pitch=${p.pitch} fov=${p.h_fov}`;
+    b.dataset.preset = name;
+    b.addEventListener('click', () => setPreset(name));
+    el.presets.appendChild(b);
+
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = `${name} (${p.label || name})`;
+    el.saveTarget.appendChild(opt);
+  }
+  if (PRESETS[state.preset]) el.saveTarget.value = state.preset;
+  highlightPreset();
+}
+
+async function loadPresetsFromServer() {
+  const r = await fetch('/api/presets', { cache: 'no-store' });
+  if (!r.ok) throw new Error(`presets HTTP ${r.status}`);
+  const doc = await r.json();
+  PRESETS = doc.presets || {};
+  el.presetPath.textContent = doc.path
+    ? `Persisted: ${doc.path}`
+    : 'Persisted: presets.json';
+  rebuildPresetUi();
+  if (PRESETS.forward) setPreset('forward');
+  else {
+    const first = Object.keys(PRESETS)[0];
+    if (first) setPreset(first);
+  }
 }
 
 el.yaw.addEventListener('input', () => {
@@ -212,6 +230,39 @@ el.markOut.addEventListener('click', () => {
   el.status.textContent = `Added ${fmtTime(t0)}–${fmtTime(t1)} → Mark In moved to Out`;
 });
 
+el.savePreset.addEventListener('click', async () => {
+  const name = el.saveTarget.value;
+  if (!name) return;
+  const body = {
+    yaw: Math.round(state.yaw),
+    pitch: Math.round(state.pitch),
+    h_fov: Math.round(state.fov),
+    v_fov: PRESETS[name]?.v_fov ?? 70,
+    roll: 0,
+    label: PRESETS[name]?.label || name,
+  };
+  const r = await fetch(`/api/presets/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const doc = await r.json();
+  if (!r.ok || !doc.ok) {
+    el.status.textContent = `Save failed: ${doc.error || r.status}`;
+    return;
+  }
+  PRESETS[name] = doc.preset;
+  state.preset = name;
+  rebuildPresetUi();
+  applyLook();
+  el.status.textContent = `Saved ${name}: yaw=${body.yaw} pitch=${body.pitch} fov=${body.h_fov} → presets.json (CLI uses this)`;
+});
+
+el.reloadPresets.addEventListener('click', async () => {
+  await loadPresetsFromServer();
+  el.status.textContent = 'Presets reloaded from disk';
+});
+
 el.copyTimeline.addEventListener('click', async () => {
   await navigator.clipboard.writeText(el.timeline.value.trim().replace(/\n/g, ''));
   el.status.textContent = 'Timeline copied';
@@ -222,7 +273,6 @@ el.copyCmd.addEventListener('click', async () => {
 });
 el.timeline.addEventListener('input', updateCmd);
 
-// Drag to look
 el.view.addEventListener('pointerdown', (e) => {
   state.dragging = true;
   state.lastX = e.clientX;
@@ -250,12 +300,9 @@ el.view.addEventListener('wheel', (e) => {
 window.addEventListener('resize', resize);
 
 video.addEventListener('loadedmetadata', () => {
-  el.status.textContent = `Ready · ${fmtTime(video.duration)} · drag to look`;
+  el.status.textContent = `Ready · ${fmtTime(video.duration)} · drag to look · save presets when tuned`;
   resize();
-  setPreset('forward');
-  video.play().catch(() => {
-    el.status.textContent = 'Ready (press Play) · drag to look';
-  });
+  video.play().catch(() => {});
 });
 video.addEventListener('error', () => {
   el.status.textContent = 'Video failed to load — is the preview server running with --video?';
@@ -264,10 +311,19 @@ video.addEventListener('error', () => {
 fetch('/api/info')
   .then((r) => r.json())
   .then((info) => {
-    el.status.textContent = `Source: ${info.name || info.video}`;
+    if (info.presetsPath) el.presetPath.textContent = `Persisted: ${info.presetsPath}`;
   })
   .catch(() => {});
 
-resize();
-applyLook();
-tick();
+loadPresetsFromServer()
+  .then(() => {
+    resize();
+    applyLook();
+    tick();
+  })
+  .catch((err) => {
+    el.status.textContent = `Preset load failed: ${err.message}`;
+    resize();
+    applyLook();
+    tick();
+  });

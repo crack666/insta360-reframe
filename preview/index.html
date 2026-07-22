@@ -14,6 +14,14 @@
 
       <div class="row presets" id="presets"></div>
 
+      <label>Target preset to overwrite</label>
+      <select id="saveTarget"></select>
+      <div class="row">
+        <button type="button" id="savePreset">Save current angles → preset</button>
+        <button type="button" id="reloadPresets">Reload from disk</button>
+      </div>
+      <p class="hint" id="presetPath"></p>
+
       <label>Yaw <span id="yawVal">0</span>°</label>
       <input type="range" id="yaw" min="-180" max="180" step="1" value="0" />
 
