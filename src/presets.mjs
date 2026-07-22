@@ -118,15 +118,33 @@ export function resolveSegmentView(seg, presets = loadPresets()) {
   return { ...view, lens: lens.id };
 }
 
+/**
+ * Convert UI / Three.js look angles to ffmpeg v360.
+ * Preview uses inverted equirect sphere + rotation.y = -yaw; ffmpeg's yaw=0
+ * points at equirect center — empirically needs +90° yaw to match the preview.
+ */
+export function toFfmpegView(view) {
+  const yawUi = Number(view.yaw) || 0;
+  const pitchUi = Number(view.pitch) || 0;
+  let yaw = yawUi + 90;
+  yaw = ((yaw + 540) % 360) - 180;
+  return {
+    ...view,
+    yaw,
+    pitch: pitchUi,
+    roll: Number(view.roll) || 0,
+  };
+}
+
 export function v360Filter(view, { width = 1280, height = 720 } = {}) {
-  const { yaw, pitch, roll, h_fov, v_fov } = view;
+  const v = toFfmpegView(view);
   return [
     `v360=input=e:output=flat`,
-    `yaw=${yaw}`,
-    `pitch=${pitch}`,
-    `roll=${roll ?? 0}`,
-    `h_fov=${h_fov}`,
-    `v_fov=${v_fov ?? 70}`,
+    `yaw=${v.yaw}`,
+    `pitch=${v.pitch}`,
+    `roll=${v.roll ?? 0}`,
+    `h_fov=${v.h_fov}`,
+    `v_fov=${v.v_fov ?? 70}`,
     `w=${width}`,
     `h=${height}`,
   ].join(':');
