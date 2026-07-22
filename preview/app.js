@@ -52,6 +52,18 @@ const el = {
   analyze: document.getElementById('analyze'),
   acceptPauses: document.getElementById('acceptPauses'),
   applyProposed: document.getElementById('applyProposed'),
+  optCalm: document.getElementById('optCalm'),
+  optValleys: document.getElementById('optValleys'),
+  optSkin: document.getElementById('optSkin'),
+  optSpikes: document.getElementById('optSpikes'),
+  optStrict: document.getElementById('optStrict'),
+  optStrictVal: document.getElementById('optStrictVal'),
+  optMinCalm: document.getElementById('optMinCalm'),
+  optMinCalmVal: document.getElementById('optMinCalmVal'),
+  optMinSkin: document.getElementById('optMinSkin'),
+  optMinSkinVal: document.getElementById('optMinSkinVal'),
+  optMinConf: document.getElementById('optMinConf'),
+  optMinConfVal: document.getElementById('optMinConfVal'),
   cmd: document.getElementById('cmd'),
   status: document.getElementById('status'),
   videoName: document.getElementById('videoName'),
@@ -406,7 +418,7 @@ function drawScrubber() {
   ctx.globalAlpha = 1;
   for (const s of suggestions) {
     if (dismissed.has(s.id)) continue;
-    if (s.type === 'pause') {
+    if (isSelfieSuggestion(s)) {
       const x0 = (s.start / dur) * w;
       const x1 = (s.end / dur) * w;
       ctx.strokeStyle = '#fff';
@@ -426,24 +438,33 @@ function drawScrubber() {
   ctx.fillRect(px - 1, 0, 2, 28);
 }
 
+function isSelfieSuggestion(s) {
+  return s.type === 'selfie' || s.type === 'pause';
+}
+
+function suggestBadge(s) {
+  const src = s.source || (s.type === 'motion_spike' ? 'spike' : 'ruhe');
+  return src;
+}
+
 function renderSuggestions() {
   el.suggestList.innerHTML = '';
   const visible = suggestions.filter((s) => !dismissed.has(s.id));
   if (!visible.length) {
-    el.suggestList.innerHTML = '<p class="hint">Noch keine Vorschläge — „Video analysieren“.</p>';
+    el.suggestList.innerHTML = '<p class="hint">Noch keine Vorschläge — Parameter anpassen &amp; „Video analysieren“.</p>';
     return;
   }
   for (const s of visible) {
     const item = document.createElement('div');
     item.className = 'suggest-item';
-    const badge = s.type === 'pause' ? 'pause' : 'spike';
-    const range = s.type === 'pause'
+    const badge = suggestBadge(s);
+    const range = isSelfieSuggestion(s)
       ? `${fmtTime(s.start)} – ${fmtTime(s.end)} → ${s.preset}`
       : `@ ${fmtTime(s.at ?? s.start)}`;
     item.innerHTML = `
       <div class="top">
         <strong>${range}</strong>
-        <span class="badge ${badge}">${s.type} · ${Math.round((s.confidence || 0) * 100)}%</span>
+        <span class="badge ${badge}">${badge} · ${Math.round((s.confidence || 0) * 100)}%</span>
       </div>
       <div class="reason">${s.reason || ''}</div>
       <div class="actions"></div>`;
@@ -456,7 +477,7 @@ function renderSuggestions() {
       if (s.preset && PRESETS[s.preset]) setPreset(s.preset);
     });
     actions.appendChild(jump);
-    if (s.type === 'pause') {
+    if (isSelfieSuggestion(s)) {
       const acc = document.createElement('button');
       acc.type = 'button';
       acc.className = 'accept';
@@ -470,19 +491,28 @@ function renderSuggestions() {
     rej.textContent = 'Verwerfen';
     rej.addEventListener('click', () => {
       dismissed.add(s.id);
+      restoreTimelineView();
       renderSuggestions();
       drawScrubber();
+      el.status.textContent = `Verworfen · Ansicht → ${presetAt(segments, video.currentTime || 0)}`;
     });
     actions.appendChild(rej);
     el.suggestList.appendChild(item);
   }
 }
 
+/** Snap look to the timeline preset at the current playhead. */
+function restoreTimelineView() {
+  const name = presetAt(segments, video.currentTime || 0);
+  if (PRESETS[name]) setPreset(name);
+}
+
 function acceptSuggestion(s) {
-  if (s.type !== 'pause') return;
+  if (!isSelfieSuggestion(s)) return;
   segments = setRange(segments, s.start, s.end, s.preset, state.duration);
   dismissed.add(s.id);
   syncFromSegments();
+  restoreTimelineView();
   renderSuggestions();
   el.status.textContent = `Übernommen: ${fmtTime(s.start)}–${fmtTime(s.end)} = ${s.preset}`;
 }
@@ -656,11 +686,43 @@ el.saveTimeline.addEventListener('click', async () => {
   el.status.textContent = doc.ok ? `Timeline gespeichert → ${doc.path}` : `Fehler: ${doc.error}`;
 });
 
+function readAnalyzeOptions() {
+  return {
+    enableCalm: el.optCalm.checked,
+    enableValleys: el.optValleys.checked,
+    enableSkin: el.optSkin.checked,
+    enableSpikes: el.optSpikes.checked,
+    calmStrictness: Number(el.optStrict.value),
+    minCalmSec: Number(el.optMinCalm.value),
+    minSkinPct: Number(el.optMinSkin.value),
+    minConfidence: Number(el.optMinConf.value) / 100,
+    proposedMinConfidence: Math.max(0.45, Number(el.optMinConf.value) / 100 + 0.05),
+  };
+}
+
+function bindAnalyzeOptionLabels() {
+  const sync = () => {
+    el.optStrictVal.textContent = el.optStrict.value;
+    el.optMinCalmVal.textContent = el.optMinCalm.value;
+    el.optMinSkinVal.textContent = el.optMinSkin.value;
+    el.optMinConfVal.textContent = el.optMinConf.value;
+  };
+  for (const id of ['optStrict', 'optMinCalm', 'optMinSkin', 'optMinConf']) {
+    el[id].addEventListener('input', sync);
+  }
+  sync();
+}
+
 el.analyze.addEventListener('click', async () => {
   el.analyze.disabled = true;
-  el.status.textContent = 'Analysiere Bewegung / Pausen… (ein paar Sekunden)';
+  const opts = readAnalyzeOptions();
+  el.status.textContent = 'Analysiere… (Parameter werden mitgeschickt)';
   try {
-    const r = await fetch('/api/suggest', { method: 'POST' });
+    const r = await fetch('/api/suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
     const doc = await r.json();
     if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
     suggestions = doc.suggestions || [];
@@ -668,8 +730,9 @@ el.analyze.addEventListener('click', async () => {
     dismissed.clear();
     renderSuggestions();
     drawScrubber();
-    const nPause = suggestions.filter((s) => s.type === 'pause').length;
-    el.status.textContent = `Fertig: ${nPause} Pause-Vorschläge, ${suggestions.length - nPause} Spikes`;
+    const nSelfie = suggestions.filter(isSelfieSuggestion).length;
+    el.status.textContent = `Fertig: ${nSelfie} Selfie-Vorschläge, ${suggestions.length - nSelfie} Spikes`
+      + (doc.options ? ` · Strenge ${doc.options.calmStrictness}` : '');
   } catch (err) {
     el.status.textContent = `Analyse fehlgeschlagen: ${err.message || err}`;
   } finally {
@@ -678,10 +741,10 @@ el.analyze.addEventListener('click', async () => {
 });
 
 el.acceptPauses.addEventListener('click', () => {
-  for (const s of suggestions.filter((x) => x.type === 'pause' && !dismissed.has(x.id))) {
+  for (const s of suggestions.filter((x) => isSelfieSuggestion(x) && !dismissed.has(x.id))) {
     acceptSuggestion(s);
   }
-  el.status.textContent = 'Alle Pause-Vorschläge übernommen';
+  el.status.textContent = 'Alle Selfie-Vorschläge übernommen';
 });
 
 el.applyProposed.addEventListener('click', () => {
@@ -690,11 +753,13 @@ el.applyProposed.addEventListener('click', () => {
     return;
   }
   segments = normalizeSegments(proposedSegments, state.duration);
-  for (const s of suggestions.filter((x) => x.type === 'pause')) dismissed.add(s.id);
+  for (const s of suggestions.filter(isSelfieSuggestion)) dismissed.add(s.id);
   syncFromSegments();
   renderSuggestions();
   el.status.textContent = 'Vorschlags-Timeline geladen (nur höhere Confidence)';
 });
+
+bindAnalyzeOptionLabels();
 
 el.view.addEventListener('pointerdown', (e) => {
   state.dragging = true;

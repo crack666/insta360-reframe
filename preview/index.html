@@ -43,10 +43,30 @@
 
       <section>
         <h2>2 · Vorschläge (semi-auto)</h2>
-        <p class="hint">Pause/wenig Bewegung → selfie-Kandidat. Du bestätigst.</p>
+        <p class="hint">
+          „Ruhe“ = wenig Bildbewegung (nicht zwingend Stillstand). Schwache Täler sind oft Noise —
+          standardmäßig aus.
+        </p>
+        <details class="analyze-opts" open>
+          <summary>Analyse-Parameter</summary>
+          <div class="opt-grid">
+            <label class="check"><input type="checkbox" id="optCalm" checked /> Ruhe-Abschnitte</label>
+            <label class="check"><input type="checkbox" id="optValleys" /> Bewegungs-Täler <span class="muted">(viele, schwach)</span></label>
+            <label class="check"><input type="checkbox" id="optSkin" checked /> Selfie-Sektor (Haut)</label>
+            <label class="check"><input type="checkbox" id="optSpikes" checked /> Bewegungs-Spikes</label>
+          </div>
+          <label>Ruhe-Strenge <span id="optStrictVal">45</span> <span class="muted">(höher = weniger Selfie-Vorschläge)</span></label>
+          <input type="range" id="optStrict" min="0" max="100" step="5" value="45" />
+          <label>Min. Ruhe-Dauer <span id="optMinCalmVal">2</span>s</label>
+          <input type="range" id="optMinCalm" min="1" max="6" step="0.5" value="2" />
+          <label>Min. Hautanteil Selfie <span id="optMinSkinVal">10</span>%</label>
+          <input type="range" id="optMinSkin" min="5" max="40" step="1" value="10" />
+          <label>Min. Anzeige-Confidence <span id="optMinConfVal">45</span>%</label>
+          <input type="range" id="optMinConf" min="20" max="80" step="5" value="45" />
+        </details>
         <div class="row">
           <button type="button" id="analyze" class="primary">Video analysieren</button>
-          <button type="button" id="acceptPauses">Alle Pausen übernehmen</button>
+          <button type="button" id="acceptPauses">Alle Selfie-Vorschläge übernehmen</button>
           <button type="button" id="applyProposed">Vorschlags-Timeline laden</button>
         </div>
         <div id="suggestList" class="suggest-list"></div>

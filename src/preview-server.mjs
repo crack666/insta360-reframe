@@ -189,10 +189,27 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === '/api/suggest' && method === 'POST') {
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        if (raw.trim()) body = JSON.parse(raw);
+      } catch {
+        body = {};
+      }
       const result = await analyzeSuggestions(videoPath, {
-        defaultPreset: 'forward',
-        pausePreset: 'selfie',
-        fps: 2,
+        defaultPreset: body.defaultPreset || 'forward',
+        pausePreset: body.pausePreset || 'selfie',
+        fps: body.fps || 2,
+        enableCalm: body.enableCalm,
+        enableValleys: body.enableValleys,
+        enableSkin: body.enableSkin,
+        enableSpikes: body.enableSpikes,
+        calmStrictness: body.calmStrictness,
+        minCalmSec: body.minCalmSec,
+        minSkinPct: body.minSkinPct,
+        skinStepSec: body.skinStepSec,
+        minConfidence: body.minConfidence,
+        proposedMinConfidence: body.proposedMinConfidence,
       });
       const suggestPath = `${videoPath}.suggestions.json`;
       fs.writeFileSync(suggestPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
