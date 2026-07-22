@@ -11,10 +11,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { loadPresetsDoc, savePresetsDoc, updatePreset, PRESETS_PATH } from './presets.mjs';
+import { analyzeSuggestions } from './suggest.mjs';
+import { parseTimeline, serializeTimeline } from './timeline.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const PREVIEW = path.join(ROOT, 'preview');
+
+function timelinePathFor(video) {
+  return `${video}.timeline.json`;
+}
 
 function parseArgs(argv) {
   const opts = { video: null, port: 8787, open: true };
@@ -147,9 +153,53 @@ const server = http.createServer(async (req, res) => {
         name: path.basename(videoPath),
         size: fs.statSync(videoPath).size,
         presetsPath: PRESETS_PATH,
+        timelinePath: timelinePathFor(videoPath),
       });
       return;
     }
+
+    if (url.pathname === '/api/timeline' && method === 'GET') {
+      const p = timelinePathFor(videoPath);
+      if (!fs.existsSync(p)) {
+        json(res, 200, { ok: true, segments: [], path: p });
+        return;
+      }
+      const doc = JSON.parse(fs.readFileSync(p, 'utf8'));
+      json(res, 200, { ok: true, ...doc, path: p });
+      return;
+    }
+
+    if (url.pathname === '/api/timeline' && method === 'PUT') {
+      const body = JSON.parse(await readBody(req));
+      const p = timelinePathFor(videoPath);
+      let segments = Array.isArray(body.segments) ? body.segments : [];
+      if (!segments.length && body.timeline) {
+        segments = parseTimeline(body.timeline);
+      }
+      const out = {
+        version: 1,
+        video: videoPath,
+        timeline: body.timeline || serializeTimeline(segments),
+        segments,
+        updated: new Date().toISOString(),
+      };
+      fs.writeFileSync(p, `${JSON.stringify(out, null, 2)}\n`, 'utf8');
+      json(res, 200, { ok: true, path: p, ...out });
+      return;
+    }
+
+    if (url.pathname === '/api/suggest' && method === 'POST') {
+      const result = await analyzeSuggestions(videoPath, {
+        defaultPreset: 'forward',
+        pausePreset: 'selfie',
+        fps: 2,
+      });
+      const suggestPath = `${videoPath}.suggestions.json`;
+      fs.writeFileSync(suggestPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+      json(res, 200, { ok: true, path: suggestPath, ...result });
+      return;
+    }
+
     res.writeHead(404).end('Not found');
   } catch (err) {
     json(res, 500, { ok: false, error: String(err.message || err) });

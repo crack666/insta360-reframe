@@ -3,8 +3,8 @@
   "note": "Shared by preview UI and CLI export. Edit in preview (Save to preset) or by hand.",
   "presets": {
     "forward": {
-      "yaw": 0,
-      "pitch": -8,
+      "yaw": -86,
+      "pitch": -14,
       "roll": 0,
       "h_fov": 90,
       "v_fov": 70,
@@ -19,37 +19,37 @@
       "label": "selfie"
     },
     "up": {
-      "yaw": 0,
-      "pitch": 55,
+      "yaw": -70,
+      "pitch": 61,
       "roll": 0,
       "h_fov": 85,
       "v_fov": 65,
       "label": "up"
     },
     "left": {
-      "yaw": -90,
-      "pitch": -5,
+      "yaw": -180,
+      "pitch": -8,
       "roll": 0,
       "h_fov": 90,
       "v_fov": 70,
       "label": "left"
     },
     "right": {
-      "yaw": 90,
-      "pitch": -5,
+      "yaw": -26,
+      "pitch": -11,
       "roll": 0,
       "h_fov": 90,
       "v_fov": 70,
       "label": "right"
     },
     "back": {
-      "yaw": 180,
-      "pitch": -5,
+      "yaw": 86,
+      "pitch": -11,
       "roll": 0,
       "h_fov": 90,
       "v_fov": 70,
       "label": "back"
     }
   },
-  "updated": "2026-07-22T18:54:34.259Z"
+  "updated": "2026-07-22T18:57:30.700Z"
 }

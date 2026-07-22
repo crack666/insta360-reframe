@@ -3,53 +3,102 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>insta360-reframe preview</title>
+  <title>insta360-reframe — Editor</title>
   <link rel="stylesheet" href="/preview/styles.css" />
 </head>
 <body>
   <div id="app">
     <aside id="panel">
-      <h1>Equirect Preview</h1>
-      <p class="hint">Ziehen = gucken · Scroll = FOV · Presets = CLI-Winkel</p>
+      <header class="panel-head">
+        <h1>Reframe Editor</h1>
+        <p class="hint" id="videoName">Lädt…</p>
+      </header>
 
-      <div class="row presets" id="presets"></div>
+      <section>
+        <h2>1 · Blickrichtung</h2>
+        <p class="hint">Klick = ansehen. <kbd>C</kbd> schneidet ab Playhead auf aktives Preset.</p>
+        <div class="row presets" id="presets"></div>
+        <div class="cut-row">
+          <button type="button" id="cutHere" class="primary">Cut hier → aktives Preset</button>
+          <button type="button" id="cutForward">→ forward</button>
+          <button type="button" id="cutSelfie">→ selfie</button>
+        </div>
+        <details class="calibrate">
+          <summary>Winkel kalibrieren (presets.json)</summary>
+          <label>Ziel-Preset</label>
+          <select id="saveTarget"></select>
+          <label>Yaw <span id="yawVal">0</span>°</label>
+          <input type="range" id="yaw" min="-180" max="180" step="1" value="0" />
+          <label>Pitch <span id="pitchVal">0</span>°</label>
+          <input type="range" id="pitch" min="-89" max="89" step="1" value="0" />
+          <label>H-FOV <span id="fovVal">90</span>°</label>
+          <input type="range" id="fov" min="40" max="120" step="1" value="90" />
+          <div class="row">
+            <button type="button" id="savePreset">Speichern</button>
+            <button type="button" id="reloadPresets">Neu laden</button>
+          </div>
+          <p class="hint" id="presetPath"></p>
+        </details>
+      </section>
 
-      <label>Target preset to overwrite</label>
-      <select id="saveTarget"></select>
-      <div class="row">
-        <button type="button" id="savePreset">Save current angles → preset</button>
-        <button type="button" id="reloadPresets">Reload from disk</button>
-      </div>
-      <p class="hint" id="presetPath"></p>
+      <section>
+        <h2>2 · Vorschläge (semi-auto)</h2>
+        <p class="hint">Pause/wenig Bewegung → selfie-Kandidat. Du bestätigst.</p>
+        <div class="row">
+          <button type="button" id="analyze" class="primary">Video analysieren</button>
+          <button type="button" id="acceptPauses">Alle Pausen übernehmen</button>
+          <button type="button" id="applyProposed">Vorschlags-Timeline laden</button>
+        </div>
+        <div id="suggestList" class="suggest-list"></div>
+      </section>
 
-      <label>Yaw <span id="yawVal">0</span>°</label>
-      <input type="range" id="yaw" min="-180" max="180" step="1" value="0" />
+      <section>
+        <h2>3 · Timeline</h2>
+        <div id="segList" class="seg-list"></div>
+        <div class="row">
+          <button type="button" id="resetTimeline">Reset → nur forward</button>
+          <button type="button" id="removeCut">Cut am Playhead löschen</button>
+        </div>
+        <details>
+          <summary>Rohtext / CLI</summary>
+          <textarea id="timeline" rows="4" placeholder="0-12=forward,12-22=selfie,…"></textarea>
+          <div class="row">
+            <button type="button" id="copyTimeline">Timeline kopieren</button>
+            <button type="button" id="copyCmd">CLI kopieren</button>
+            <button type="button" id="saveTimeline">Timeline speichern</button>
+          </div>
+          <pre id="cmd" class="cmd"></pre>
+        </details>
+      </section>
 
-      <label>Pitch <span id="pitchVal">0</span>°</label>
-      <input type="range" id="pitch" min="-89" max="89" step="1" value="0" />
-
-      <label>H-FOV <span id="fovVal">90</span>°</label>
-      <input type="range" id="fov" min="40" max="120" step="1" value="90" />
-
-      <div class="row">
-        <button type="button" id="play">Play/Pause</button>
-        <button type="button" id="markIn">Mark In</button>
-        <button type="button" id="markOut">Mark Out + Add</button>
-      </div>
-
-      <label>Time <span id="timeVal">0:00</span></label>
-      <input type="range" id="seek" min="0" max="1000" step="1" value="0" />
-
-      <h2>Timeline</h2>
-      <textarea id="timeline" rows="5" placeholder="0-12=forward,&#10;12-22=selfie,&#10;22-end=forward"></textarea>
-      <div class="row">
-        <button type="button" id="copyTimeline">Copy timeline</button>
-        <button type="button" id="copyCmd">Copy CLI cmd</button>
-      </div>
-      <pre id="cmd" class="cmd"></pre>
+      <p class="hint shortcuts">
+        <kbd>Space</kbd> Play · <kbd>C</kbd> Cut · <kbd>F</kbd>/<kbd>S</kbd> forward/selfie ·
+        <kbd>1</kbd><kbd>2</kbd><kbd>4</kbd> Tempo · <kbd>[</kbd><kbd>]</kbd> ±5s · <kbd>Del</kbd> Cut weg
+      </p>
       <p class="hint" id="status">Loading…</p>
     </aside>
-    <main id="view"></main>
+
+    <main id="stage">
+      <div id="view"></div>
+      <div id="peek" class="peek" aria-label="Preset-Vergleich"></div>
+      <div id="transport" class="transport">
+        <div class="scrub-wrap">
+          <canvas id="scrubCanvas" height="28"></canvas>
+          <input type="range" id="seek" min="0" max="1000" step="1" value="0" />
+        </div>
+        <div class="transport-row">
+          <button type="button" id="play">Play</button>
+          <span id="timeVal" class="time">0:00 / 0:00</span>
+          <div class="rates" id="rates">
+            <button type="button" data-rate="0.5">0.5×</button>
+            <button type="button" data-rate="1" class="active">1×</button>
+            <button type="button" data-rate="2">2×</button>
+            <button type="button" data-rate="4">4×</button>
+          </div>
+          <span id="activeSeg" class="active-seg"></span>
+        </div>
+      </div>
+    </main>
   </div>
   <script type="importmap">
   {

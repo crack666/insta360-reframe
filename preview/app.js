@@ -9,8 +9,20 @@ const fmtTime = (s) => {
   return `${m}:${String(sec).padStart(2, '0')}`;
 };
 
+const PRESET_COLORS = {
+  forward: '#3d9cf0',
+  selfie: '#e07a5f',
+  up: '#81b29a',
+  left: '#9b7ebd',
+  right: '#f2cc8f',
+  back: '#6c757d',
+};
+const PEEK_NAMES = ['forward', 'selfie', 'left', 'right'];
+const DEFAULT_PRESET = 'forward';
+
 const el = {
   view: document.getElementById('view'),
+  peek: document.getElementById('peek'),
   presets: document.getElementById('presets'),
   saveTarget: document.getElementById('saveTarget'),
   savePreset: document.getElementById('savePreset'),
@@ -25,29 +37,174 @@ const el = {
   seek: document.getElementById('seek'),
   timeVal: document.getElementById('timeVal'),
   play: document.getElementById('play'),
-  markIn: document.getElementById('markIn'),
-  markOut: document.getElementById('markOut'),
+  scrubCanvas: document.getElementById('scrubCanvas'),
   timeline: document.getElementById('timeline'),
+  segList: document.getElementById('segList'),
+  suggestList: document.getElementById('suggestList'),
   copyTimeline: document.getElementById('copyTimeline'),
   copyCmd: document.getElementById('copyCmd'),
+  saveTimeline: document.getElementById('saveTimeline'),
+  resetTimeline: document.getElementById('resetTimeline'),
+  removeCut: document.getElementById('removeCut'),
+  cutHere: document.getElementById('cutHere'),
+  cutForward: document.getElementById('cutForward'),
+  cutSelfie: document.getElementById('cutSelfie'),
+  analyze: document.getElementById('analyze'),
+  acceptPauses: document.getElementById('acceptPauses'),
+  applyProposed: document.getElementById('applyProposed'),
   cmd: document.getElementById('cmd'),
   status: document.getElementById('status'),
+  videoName: document.getElementById('videoName'),
+  activeSeg: document.getElementById('activeSeg'),
+  rates: document.getElementById('rates'),
 };
 
 /** @type {Record<string, {yaw:number,pitch:number,h_fov:number,v_fov?:number,roll?:number,label:string}>} */
 let PRESETS = {};
+/** @type {{start:number,end:number,preset:string}[]} */
+let segments = [];
+/** @type {any[]} */
+let suggestions = [];
+/** @type {{start:number,end:number,preset:string}[]|null} */
+let proposedSegments = null;
+/** @type {Set<string>} */
+const dismissed = new Set();
 
 const state = {
   yaw: 0,
   pitch: 0,
   fov: 90,
-  preset: 'forward',
-  markIn: 0,
+  preset: DEFAULT_PRESET,
   dragging: false,
   lastX: 0,
   lastY: 0,
+  duration: 0,
+  rate: 1,
 };
 
+// —— Timeline helpers (mirror server) ——
+function mergeAdjacent(list, eps = 0.05) {
+  if (!list.length) return [];
+  const out = [{ ...list[0] }];
+  for (let i = 1; i < list.length; i++) {
+    const prev = out[out.length - 1];
+    const cur = list[i];
+    if (prev.preset === cur.preset && Math.abs(prev.end - cur.start) <= eps) prev.end = cur.end;
+    else out.push({ ...cur });
+  }
+  return out;
+}
+
+function normalizeSegments(list, durationSec, defaultPreset = DEFAULT_PRESET) {
+  const dur = Math.max(0, durationSec);
+  if (!dur) return [];
+  let sorted = (list || [])
+    .map((s) => ({
+      start: Math.max(0, s.start),
+      end: Math.min(dur, s.end == null ? dur : s.end),
+      preset: String(s.preset || defaultPreset).toLowerCase(),
+    }))
+    .filter((s) => s.end - s.start > 0.02)
+    .sort((a, b) => a.start - b.start);
+  if (!sorted.length) return [{ start: 0, end: dur, preset: defaultPreset }];
+  const filled = [];
+  let cursor = 0;
+  for (const s of sorted) {
+    if (s.start > cursor + 0.02) filled.push({ start: cursor, end: s.start, preset: defaultPreset });
+    const start = Math.max(s.start, cursor);
+    if (s.end > start + 0.02) filled.push({ start, end: s.end, preset: s.preset });
+    cursor = Math.max(cursor, s.end);
+  }
+  if (cursor < dur - 0.02) filled.push({ start: cursor, end: dur, preset: defaultPreset });
+  return mergeAdjacent(filled);
+}
+
+function switchAt(list, t, preset, durationSec) {
+  let segs = normalizeSegments(list, durationSec);
+  t = clamp(Number(t) || 0, 0, durationSec);
+  const eps = 0.05;
+  const name = String(preset).toLowerCase();
+  const out = [];
+  for (const s of segs) {
+    if (s.end <= t + eps) { out.push(s); continue; }
+    if (s.start >= t - eps) { out.push(s); continue; }
+    if (t - s.start > eps) out.push({ start: s.start, end: t, preset: s.preset });
+    if (s.end - t > eps) out.push({ start: t, end: s.end, preset: name });
+  }
+  return mergeAdjacent(out);
+}
+
+function setRange(list, t0, t1, preset, durationSec) {
+  const name = String(preset).toLowerCase();
+  let a = clamp(Number(t0) || 0, 0, durationSec);
+  let b = clamp(Number(t1) || 0, 0, durationSec);
+  if (b <= a + 0.05) return normalizeSegments(list, durationSec);
+  let segs = normalizeSegments(list, durationSec);
+  const out = [];
+  for (const s of segs) {
+    if (s.end <= a || s.start >= b) { out.push(s); continue; }
+    if (s.start < a) out.push({ start: s.start, end: a, preset: s.preset });
+    const mid0 = Math.max(s.start, a);
+    const mid1 = Math.min(s.end, b);
+    if (mid1 > mid0) out.push({ start: mid0, end: mid1, preset: name });
+    if (s.end > b) out.push({ start: b, end: s.end, preset: s.preset });
+  }
+  return mergeAdjacent(out);
+}
+
+function removeCutNear(list, t, durationSec, tol = 0.75) {
+  let segs = normalizeSegments(list, durationSec);
+  if (segs.length < 2) return segs;
+  let best = -1;
+  let bestDist = Infinity;
+  for (let i = 1; i < segs.length; i++) {
+    const d = Math.abs(segs[i].start - t);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  if (best < 1 || bestDist > tol) return segs;
+  segs[best - 1] = { start: segs[best - 1].start, end: segs[best].end, preset: segs[best - 1].preset };
+  segs.splice(best, 1);
+  return mergeAdjacent(segs);
+}
+
+function presetAt(list, t) {
+  for (const s of list) {
+    if (t >= s.start - 1e-6 && t < s.end - 1e-6) return s.preset;
+  }
+  if (list.length && Math.abs(t - list[list.length - 1].end) < 1e-3) return list[list.length - 1].preset;
+  return DEFAULT_PRESET;
+}
+
+function serializeTimeline(list) {
+  return list.map((s) => `${Number(s.start.toFixed(1))}-${Number(s.end.toFixed(1))}=${s.preset}`).join(',');
+}
+
+function parseTimelineLoose(spec) {
+  if (!spec || !String(spec).trim()) return [];
+  return String(spec).split(/[,\n]+/).map((s) => s.trim()).filter(Boolean).map((chunk) => {
+    const m = chunk.match(/^(.+?)-(.+?)=([a-zA-Z_][\w-]*)$/);
+    if (!m) throw new Error(`Bad segment: ${chunk}`);
+    const parseTs = (tok) => {
+      const t = tok.trim().toLowerCase();
+      if (t === 'end') return null;
+      if (/^\d+(\.\d+)?$/.test(t)) return parseFloat(t);
+      const parts = t.split(':').map(Number);
+      if (parts.length === 2) return parts[0] * 60 + parts[1];
+      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+      throw new Error(`Bad time: ${tok}`);
+    };
+    return { start: parseTs(m[1]), end: parseTs(m[2]), preset: m[3].toLowerCase() };
+  }).map((s) => ({
+    ...s,
+    end: s.end == null ? state.duration : s.end,
+  }));
+}
+
+function colorFor(name) {
+  return PRESET_COLORS[name] || '#888';
+}
+
+// —— Three.js main view ——
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 el.view.appendChild(renderer.domElement);
@@ -70,7 +227,49 @@ texture.magFilter = THREE.LinearFilter;
 
 const geo = new THREE.SphereGeometry(50, 64, 32);
 geo.scale(-1, 1, 1);
-scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: texture })));
+const sphereMat = new THREE.MeshBasicMaterial({ map: texture });
+scene.add(new THREE.Mesh(geo, sphereMat));
+
+// Peek strip — shared texture, separate cameras
+const peekViews = [];
+function buildPeek() {
+  el.peek.innerHTML = '';
+  peekViews.length = 0;
+  for (const name of PEEK_NAMES) {
+    const card = document.createElement('div');
+    card.className = 'peek-card';
+    card.dataset.preset = name;
+    const label = document.createElement('span');
+    label.textContent = name;
+    const canvas = document.createElement('canvas');
+    card.appendChild(canvas);
+    card.appendChild(label);
+    card.addEventListener('click', () => {
+      setPreset(name);
+      doCut(name);
+    });
+    el.peek.appendChild(card);
+
+    const r = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false });
+    r.setPixelRatio(1);
+    const cam = new THREE.PerspectiveCamera(90, 16 / 9, 0.1, 100);
+    cam.position.set(0, 0, 0.01);
+    peekViews.push({ name, card, renderer: r, camera: cam });
+  }
+}
+
+function applyPeekCameras() {
+  for (const pv of peekViews) {
+    const p = PRESETS[pv.name];
+    if (!p) continue;
+    pv.camera.rotation.order = 'YXZ';
+    pv.camera.rotation.y = deg(-p.yaw);
+    pv.camera.rotation.x = deg(p.pitch);
+    pv.camera.fov = p.h_fov;
+    pv.camera.updateProjectionMatrix();
+    pv.card.classList.toggle('active', state.preset === pv.name);
+  }
+}
 
 function applyLook() {
   camera.rotation.order = 'YXZ';
@@ -84,8 +283,9 @@ function applyLook() {
   el.yawVal.textContent = String(Math.round(state.yaw));
   el.pitchVal.textContent = String(Math.round(state.pitch));
   el.fovVal.textContent = String(Math.round(state.fov));
-  updateCmd();
   highlightPreset();
+  applyPeekCameras();
+  updateCmd();
 }
 
 function resize() {
@@ -94,14 +294,28 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / Math.max(h, 1);
   camera.updateProjectionMatrix();
+  for (const pv of peekViews) {
+    const cw = pv.card.clientWidth || 160;
+    const ch = pv.card.clientHeight || 90;
+    pv.renderer.setSize(cw, ch, false);
+    pv.camera.aspect = cw / Math.max(ch, 1);
+    pv.camera.updateProjectionMatrix();
+  }
+  drawScrubber();
 }
 
 function tick() {
   if (video.duration && !el.seek.matches(':active')) {
     el.seek.value = String(Math.round((video.currentTime / video.duration) * 1000));
     el.timeVal.textContent = `${fmtTime(video.currentTime)} / ${fmtTime(video.duration)}`;
+    const cur = presetAt(segments, video.currentTime);
+    el.activeSeg.textContent = `jetzt: ${cur}`;
+    el.play.textContent = video.paused ? 'Play' : 'Pause';
   }
   renderer.render(scene, camera);
+  for (const pv of peekViews) {
+    pv.renderer.render(scene, pv.camera);
+  }
   requestAnimationFrame(tick);
 }
 
@@ -122,33 +336,164 @@ function highlightPreset() {
   }
 }
 
-function updateCmd() {
-  const tl = el.timeline.value.trim().replace(/\s+/g, '');
-  const base = 'node src/cli.mjs -i <equirect.mp4> -o flat.mp4';
-  el.cmd.textContent = tl
-    ? `${base} -t "${tl}"`
-    : `${base} -p ${state.preset}`;
-}
-
 function nearestPresetName() {
   let best = state.preset;
   let bestDist = Infinity;
   for (const [name, p] of Object.entries(PRESETS)) {
     const d = Math.abs(p.yaw - state.yaw) + Math.abs(p.pitch - state.pitch) * 0.5;
-    if (d < bestDist) {
-      bestDist = d;
-      best = name;
-    }
+    if (d < bestDist) { bestDist = d; best = name; }
   }
   return bestDist < 15 ? best : state.preset;
 }
 
-function addSegment(t0, t1) {
-  const use = nearestPresetName();
-  const line = `${t0.toFixed(1)}-${t1.toFixed(1)}=${use}`;
-  const cur = el.timeline.value.trim();
-  el.timeline.value = cur ? `${cur.replace(/,?\s*$/, '')},\n${line}` : line;
+function syncFromSegments() {
+  segments = normalizeSegments(segments, state.duration || video.duration || 0);
+  el.timeline.value = segments.map((s) => `${s.start.toFixed(1)}-${s.end.toFixed(1)}=${s.preset}`).join(',\n');
+  renderSegList();
+  drawScrubber();
   updateCmd();
+}
+
+function updateCmd() {
+  const tl = serializeTimeline(segments);
+  const base = 'node src/cli.mjs -i <equirect.mp4> -o flat.mp4';
+  el.cmd.textContent = tl ? `${base} -t "${tl}"` : `${base} -p ${state.preset}`;
+}
+
+function renderSegList() {
+  el.segList.innerHTML = '';
+  for (const s of segments) {
+    const row = document.createElement('div');
+    row.className = 'seg-item';
+    row.innerHTML = `
+      <div class="swatch" style="background:${colorFor(s.preset)}"></div>
+      <div class="meta"><div class="name">${s.preset}</div>
+      <div>${fmtTime(s.start)} – ${fmtTime(s.end)}</div></div>
+      <button type="button" data-act="jump">Gehe hin</button>`;
+    row.querySelector('[data-act="jump"]').addEventListener('click', (e) => {
+      e.stopPropagation();
+      video.currentTime = s.start + 0.05;
+      setPreset(s.preset);
+    });
+    row.addEventListener('click', () => {
+      video.currentTime = s.start + 0.05;
+      setPreset(s.preset);
+    });
+    el.segList.appendChild(row);
+  }
+}
+
+function drawScrubber() {
+  const canvas = el.scrubCanvas;
+  const wrap = canvas.parentElement;
+  const w = wrap.clientWidth || 300;
+  canvas.width = w * devicePixelRatio;
+  canvas.height = 28 * devicePixelRatio;
+  canvas.style.width = `${w}px`;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.clearRect(0, 0, w, 28);
+  ctx.fillStyle = '#0e1118';
+  ctx.fillRect(0, 0, w, 28);
+  const dur = state.duration || video.duration || 1;
+  for (const s of segments) {
+    const x0 = (s.start / dur) * w;
+    const x1 = (s.end / dur) * w;
+    ctx.fillStyle = colorFor(s.preset);
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(x0, 4, Math.max(2, x1 - x0), 20);
+  }
+  ctx.globalAlpha = 1;
+  for (const s of suggestions) {
+    if (dismissed.has(s.id)) continue;
+    if (s.type === 'pause') {
+      const x0 = (s.start / dur) * w;
+      const x1 = (s.end / dur) * w;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(x0, 2, Math.max(2, x1 - x0), 24);
+      ctx.setLineDash([]);
+    } else if (s.type === 'motion_spike') {
+      const x = ((s.at ?? s.start) / dur) * w;
+      ctx.fillStyle = '#f2cc8f';
+      ctx.fillRect(x - 1, 0, 2, 28);
+    }
+  }
+  const t = video.currentTime || 0;
+  const px = (t / dur) * w;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(px - 1, 0, 2, 28);
+}
+
+function renderSuggestions() {
+  el.suggestList.innerHTML = '';
+  const visible = suggestions.filter((s) => !dismissed.has(s.id));
+  if (!visible.length) {
+    el.suggestList.innerHTML = '<p class="hint">Noch keine Vorschläge — „Video analysieren“.</p>';
+    return;
+  }
+  for (const s of visible) {
+    const item = document.createElement('div');
+    item.className = 'suggest-item';
+    const badge = s.type === 'pause' ? 'pause' : 'spike';
+    const range = s.type === 'pause'
+      ? `${fmtTime(s.start)} – ${fmtTime(s.end)} → ${s.preset}`
+      : `@ ${fmtTime(s.at ?? s.start)}`;
+    item.innerHTML = `
+      <div class="top">
+        <strong>${range}</strong>
+        <span class="badge ${badge}">${s.type} · ${Math.round((s.confidence || 0) * 100)}%</span>
+      </div>
+      <div class="reason">${s.reason || ''}</div>
+      <div class="actions"></div>`;
+    const actions = item.querySelector('.actions');
+    const jump = document.createElement('button');
+    jump.type = 'button';
+    jump.textContent = 'Ansehen';
+    jump.addEventListener('click', () => {
+      video.currentTime = s.start ?? s.at ?? 0;
+      if (s.preset && PRESETS[s.preset]) setPreset(s.preset);
+    });
+    actions.appendChild(jump);
+    if (s.type === 'pause') {
+      const acc = document.createElement('button');
+      acc.type = 'button';
+      acc.className = 'accept';
+      acc.textContent = 'Übernehmen';
+      acc.addEventListener('click', () => acceptSuggestion(s));
+      actions.appendChild(acc);
+    }
+    const rej = document.createElement('button');
+    rej.type = 'button';
+    rej.className = 'reject';
+    rej.textContent = 'Verwerfen';
+    rej.addEventListener('click', () => {
+      dismissed.add(s.id);
+      renderSuggestions();
+      drawScrubber();
+    });
+    actions.appendChild(rej);
+    el.suggestList.appendChild(item);
+  }
+}
+
+function acceptSuggestion(s) {
+  if (s.type !== 'pause') return;
+  segments = setRange(segments, s.start, s.end, s.preset, state.duration);
+  dismissed.add(s.id);
+  syncFromSegments();
+  renderSuggestions();
+  el.status.textContent = `Übernommen: ${fmtTime(s.start)}–${fmtTime(s.end)} = ${s.preset}`;
+}
+
+function doCut(presetName) {
+  const name = presetName || state.preset || nearestPresetName();
+  const t = video.currentTime || 0;
+  segments = switchAt(segments, t, name, state.duration);
+  setPreset(name);
+  syncFromSegments();
+  el.status.textContent = `Cut @ ${fmtTime(t)} → ${name}`;
 }
 
 function rebuildPresetUi() {
@@ -158,18 +503,19 @@ function rebuildPresetUi() {
     const b = document.createElement('button');
     b.type = 'button';
     b.textContent = p.label || name;
-    b.title = `${name}: yaw=${p.yaw} pitch=${p.pitch} fov=${p.h_fov}`;
+    b.title = `${name}: yaw=${p.yaw} pitch=${p.pitch} · Klick=ansehen, Doppelklick=Cut`;
     b.dataset.preset = name;
     b.addEventListener('click', () => setPreset(name));
+    b.addEventListener('dblclick', () => doCut(name));
     el.presets.appendChild(b);
-
     const opt = document.createElement('option');
     opt.value = name;
-    opt.textContent = `${name} (${p.label || name})`;
+    opt.textContent = name;
     el.saveTarget.appendChild(opt);
   }
   if (PRESETS[state.preset]) el.saveTarget.value = state.preset;
   highlightPreset();
+  applyPeekCameras();
 }
 
 async function loadPresetsFromServer() {
@@ -177,17 +523,29 @@ async function loadPresetsFromServer() {
   if (!r.ok) throw new Error(`presets HTTP ${r.status}`);
   const doc = await r.json();
   PRESETS = doc.presets || {};
-  el.presetPath.textContent = doc.path
-    ? `Persisted: ${doc.path}`
-    : 'Persisted: presets.json';
+  el.presetPath.textContent = doc.path ? `Datei: ${doc.path}` : 'presets.json';
   rebuildPresetUi();
-  if (PRESETS.forward) setPreset('forward');
+  if (PRESETS[DEFAULT_PRESET]) setPreset(DEFAULT_PRESET);
   else {
     const first = Object.keys(PRESETS)[0];
     if (first) setPreset(first);
   }
 }
 
+async function loadTimelineFromServer() {
+  try {
+    const r = await fetch('/api/timeline', { cache: 'no-store' });
+    if (!r.ok) return;
+    const doc = await r.json();
+    if (doc.segments?.length) {
+      segments = doc.segments;
+      syncFromSegments();
+      el.status.textContent = `Timeline geladen (${segments.length} Segmente)`;
+    }
+  } catch { /* ignore */ }
+}
+
+// —— Events ——
 el.yaw.addEventListener('input', () => {
   state.yaw = Number(el.yaw.value);
   state.preset = nearestPresetName();
@@ -206,6 +564,7 @@ el.fov.addEventListener('input', () => {
 el.seek.addEventListener('input', () => {
   if (!video.duration) return;
   video.currentTime = (Number(el.seek.value) / 1000) * video.duration;
+  drawScrubber();
 });
 
 el.play.addEventListener('click', () => {
@@ -213,21 +572,37 @@ el.play.addEventListener('click', () => {
   else video.pause();
 });
 
-el.markIn.addEventListener('click', () => {
-  state.markIn = video.currentTime || 0;
-  el.status.textContent = `Mark In @ ${fmtTime(state.markIn)}`;
+el.rates.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-rate]');
+  if (!btn) return;
+  state.rate = Number(btn.dataset.rate);
+  video.playbackRate = state.rate;
+  for (const b of el.rates.querySelectorAll('button')) {
+    b.classList.toggle('active', b === btn);
+  }
 });
 
-el.markOut.addEventListener('click', () => {
-  const t1 = video.currentTime || 0;
-  const t0 = state.markIn;
-  if (t1 <= t0) {
-    el.status.textContent = 'Mark Out must be after Mark In';
-    return;
+el.cutHere.addEventListener('click', () => doCut(state.preset));
+el.cutForward.addEventListener('click', () => doCut('forward'));
+el.cutSelfie.addEventListener('click', () => doCut('selfie'));
+el.removeCut.addEventListener('click', () => {
+  segments = removeCutNear(segments, video.currentTime || 0, state.duration);
+  syncFromSegments();
+  el.status.textContent = 'Nächsten Cut am Playhead entfernt (falls vorhanden)';
+});
+el.resetTimeline.addEventListener('click', () => {
+  segments = [{ start: 0, end: state.duration, preset: DEFAULT_PRESET }];
+  syncFromSegments();
+  el.status.textContent = 'Timeline: nur forward';
+});
+
+el.timeline.addEventListener('change', () => {
+  try {
+    segments = normalizeSegments(parseTimelineLoose(el.timeline.value), state.duration);
+    syncFromSegments();
+  } catch (err) {
+    el.status.textContent = String(err.message || err);
   }
-  addSegment(t0, t1);
-  state.markIn = t1;
-  el.status.textContent = `Added ${fmtTime(t0)}–${fmtTime(t1)} → Mark In moved to Out`;
 });
 
 el.savePreset.addEventListener('click', async () => {
@@ -255,23 +630,71 @@ el.savePreset.addEventListener('click', async () => {
   state.preset = name;
   rebuildPresetUi();
   applyLook();
-  el.status.textContent = `Saved ${name}: yaw=${body.yaw} pitch=${body.pitch} fov=${body.h_fov} → presets.json (CLI uses this)`;
+  el.status.textContent = `Gespeichert ${name}: yaw=${body.yaw} pitch=${body.pitch}`;
 });
 
 el.reloadPresets.addEventListener('click', async () => {
   await loadPresetsFromServer();
-  el.status.textContent = 'Presets reloaded from disk';
+  el.status.textContent = 'Presets neu geladen';
 });
 
 el.copyTimeline.addEventListener('click', async () => {
-  await navigator.clipboard.writeText(el.timeline.value.trim().replace(/\n/g, ''));
-  el.status.textContent = 'Timeline copied';
+  await navigator.clipboard.writeText(serializeTimeline(segments));
+  el.status.textContent = 'Timeline kopiert';
 });
 el.copyCmd.addEventListener('click', async () => {
   await navigator.clipboard.writeText(el.cmd.textContent);
-  el.status.textContent = 'CLI command copied';
+  el.status.textContent = 'CLI kopiert';
 });
-el.timeline.addEventListener('input', updateCmd);
+el.saveTimeline.addEventListener('click', async () => {
+  const r = await fetch('/api/timeline', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ segments, timeline: serializeTimeline(segments) }),
+  });
+  const doc = await r.json();
+  el.status.textContent = doc.ok ? `Timeline gespeichert → ${doc.path}` : `Fehler: ${doc.error}`;
+});
+
+el.analyze.addEventListener('click', async () => {
+  el.analyze.disabled = true;
+  el.status.textContent = 'Analysiere Bewegung / Pausen… (ein paar Sekunden)';
+  try {
+    const r = await fetch('/api/suggest', { method: 'POST' });
+    const doc = await r.json();
+    if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
+    suggestions = doc.suggestions || [];
+    proposedSegments = doc.proposed || null;
+    dismissed.clear();
+    renderSuggestions();
+    drawScrubber();
+    const nPause = suggestions.filter((s) => s.type === 'pause').length;
+    el.status.textContent = `Fertig: ${nPause} Pause-Vorschläge, ${suggestions.length - nPause} Spikes`;
+  } catch (err) {
+    el.status.textContent = `Analyse fehlgeschlagen: ${err.message || err}`;
+  } finally {
+    el.analyze.disabled = false;
+  }
+});
+
+el.acceptPauses.addEventListener('click', () => {
+  for (const s of suggestions.filter((x) => x.type === 'pause' && !dismissed.has(x.id))) {
+    acceptSuggestion(s);
+  }
+  el.status.textContent = 'Alle Pause-Vorschläge übernommen';
+});
+
+el.applyProposed.addEventListener('click', () => {
+  if (!proposedSegments?.length) {
+    el.status.textContent = 'Keine Vorschlags-Timeline — zuerst analysieren';
+    return;
+  }
+  segments = normalizeSegments(proposedSegments, state.duration);
+  for (const s of suggestions.filter((x) => x.type === 'pause')) dismissed.add(s.id);
+  syncFromSegments();
+  renderSuggestions();
+  el.status.textContent = 'Vorschlags-Timeline geladen (nur höhere Confidence)';
+});
 
 el.view.addEventListener('pointerdown', (e) => {
   state.dragging = true;
@@ -297,25 +720,71 @@ el.view.addEventListener('wheel', (e) => {
   applyLook();
 }, { passive: false });
 
-window.addEventListener('resize', resize);
+window.addEventListener('keydown', (e) => {
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (video.paused) video.play().catch(() => {});
+    else video.pause();
+  } else if (e.key === 'c' || e.key === 'C') {
+    e.preventDefault();
+    doCut(state.preset);
+  } else if (e.key === 'f' || e.key === 'F') {
+    doCut('forward');
+  } else if (e.key === 's' || e.key === 'S') {
+    doCut('selfie');
+  } else if (e.key === '1') {
+    state.rate = 1; video.playbackRate = 1;
+  } else if (e.key === '2') {
+    state.rate = 2; video.playbackRate = 2;
+  } else if (e.key === '4') {
+    state.rate = 4; video.playbackRate = 4;
+  } else if (e.key === '[') {
+    video.currentTime = Math.max(0, (video.currentTime || 0) - 5);
+  } else if (e.key === ']') {
+    video.currentTime = Math.min(state.duration, (video.currentTime || 0) + 5);
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    segments = removeCutNear(segments, video.currentTime || 0, state.duration);
+    syncFromSegments();
+  }
+  for (const b of el.rates.querySelectorAll('button')) {
+    b.classList.toggle('active', Number(b.dataset.rate) === state.rate);
+  }
+  drawScrubber();
+});
 
-video.addEventListener('loadedmetadata', () => {
-  el.status.textContent = `Ready · ${fmtTime(video.duration)} · drag to look · save presets when tuned`;
+window.addEventListener('resize', resize);
+video.addEventListener('timeupdate', drawScrubber);
+
+video.addEventListener('loadedmetadata', async () => {
+  state.duration = video.duration || 0;
+  if (!segments.length) {
+    segments = [{ start: 0, end: state.duration, preset: DEFAULT_PRESET }];
+  } else {
+    segments = normalizeSegments(segments, state.duration);
+  }
+  syncFromSegments();
+  el.status.textContent = `Ready · ${fmtTime(state.duration)} · C = Cut · Peek-Klick = Cut auf Preset`;
   resize();
   video.play().catch(() => {});
 });
 video.addEventListener('error', () => {
-  el.status.textContent = 'Video failed to load — is the preview server running with --video?';
+  el.status.textContent = 'Video fehlgeschlagen — läuft der Preview-Server mit --video?';
 });
+
+buildPeek();
 
 fetch('/api/info')
   .then((r) => r.json())
   .then((info) => {
-    if (info.presetsPath) el.presetPath.textContent = `Persisted: ${info.presetsPath}`;
+    if (info.name) el.videoName.textContent = info.name;
+    if (info.presetsPath) el.presetPath.textContent = `Datei: ${info.presetsPath}`;
   })
   .catch(() => {});
 
 loadPresetsFromServer()
+  .then(() => loadTimelineFromServer())
   .then(() => {
     resize();
     applyLook();

@@ -1,49 +1,51 @@
 # insta360-reframe
 
-Equirect (MediaSDK-Stitch) → **flat** MP4 with direction presets + interactive preview.
+Equirect (MediaSDK-Stitch) → **flat** MP4 with direction presets + interactive editor.
 
-## Interactive preview
+## Preview / Editor
 
 ```bash
 npm run preview -- --video "D:/ai/ai-stack/data/insta360/work/011-reframe-smoke/equirect_40s.mp4"
 # → http://127.0.0.1:8787/
 ```
 
-- Drag = look · Scroll = FOV · Preset buttons
-- Tune yaw/pitch/FOV → **Target preset** → **Save current angles → preset**
-  (writes `presets.json` — CLI export reads the same file)
-- **Mark In / Mark Out + Add** → timeline → **Copy CLI cmd**
+### Workflow
 
-Prefer a short proxy MP4, not the multi-GB full stitch.
+1. **Presets kalibrieren** (einmal pro Mount) — Winkel speichern → `presets.json`
+2. **Cuts setzen** — Playhead + `C` / Buttons / Peek-Klick = ab hier dieses Preset
+3. **Optional analysieren** — Pausen → Selfie-Vorschläge, Spikes als Marker → übernehmen/verwerfen
+4. **Timeline speichern** → `*.timeline.json` neben dem Video · CLI kopieren · exportieren
 
-## Presets (shared)
+### Shortcuts
 
-Source of truth: **`presets.json`**. Preview + `node src/cli.mjs` share it.
+| Taste | Aktion |
+|---|---|
+| Space | Play / Pause |
+| C | Cut → aktives Preset |
+| F / S | Cut → forward / selfie |
+| 1 / 2 / 4 | Tempo |
+| [ / ] | ±5 s |
+| Del | Cut am Playhead entfernen |
 
-Names: `forward` · `selfie` · `up` · `left` · `right` · `back`  
-Calibrate per mount in the player. `selfie` is pre-seeded with one measured view (yaw 70 / pitch 46); overwrite the rest yourself.
+Peek-Streifen unten: Live-Vergleich forward · selfie · left · right (Klick = Cut).
 
-```bash
-node src/cli.mjs --list-presets
-```
-
-## Export (CLI)
+## Export
 
 ```bash
 node src/cli.mjs -i stitch.mp4 -o flat.mp4 -p forward
-node src/cli.mjs -i stitch.mp4 -o flat.mp4 \
-  -t "0:00-3:00=forward,3:00-3:25=selfie,3:25-end=forward"
+node src/cli.mjs -i stitch.mp4 -o flat.mp4 -t "0-12=forward,12-22=selfie,22-end=forward"
+# oder Timeline-Datei:
+node src/cli.mjs -i stitch.mp4 -o flat.mp4 --timeline-file stitch.mp4.timeline.txt
 ```
 
-Requires `ffmpeg` / `ffprobe` (`h264_nvenc` when available).
+`presets.json` und die Editor-Timeline teilen sich CLI und Preview.
 
 ## Pipeline
 
 1. MediaSDK: `.insv` → equirect MP4  
-2. Preview: calibrate presets + mark timeline  
-3. This CLI: equirect → flat  
+2. Preview: Presets + Cuts + optional Suggestions  
+3. CLI: equirect → flat  
 
-## Not in scope (yet)
+## Not in scope
 
-- Auto body-relative offset / face-assist  
-- Studio Deep Track
+- Studio Deep Track / vollauto Körper-Tracking
