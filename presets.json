@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "note": "Shared by preview UI and CLI export. Edit in preview (Save to preset) or by hand.",
+  "note": "Shared by preview UI and CLI export. h_fov is horizontal FOV (wider ≈ less zoom). Default ~120 matches the old preview feel.",
   "presets": {
     "forward": {
       "yaw": -86,
       "pitch": -14,
       "roll": 0,
-      "h_fov": 90,
+      "h_fov": 120,
       "v_fov": 70,
       "label": "forward"
     },
@@ -14,7 +14,7 @@
       "yaw": 70,
       "pitch": 46,
       "roll": 0,
-      "h_fov": 90,
+      "h_fov": 120,
       "v_fov": 65,
       "label": "selfie"
     },
@@ -22,7 +22,7 @@
       "yaw": -70,
       "pitch": 61,
       "roll": 0,
-      "h_fov": 85,
+      "h_fov": 115,
       "v_fov": 65,
       "label": "up"
     },
@@ -30,7 +30,7 @@
       "yaw": -180,
       "pitch": -8,
       "roll": 0,
-      "h_fov": 90,
+      "h_fov": 120,
       "v_fov": 70,
       "label": "left"
     },
@@ -38,7 +38,7 @@
       "yaw": -26,
       "pitch": -11,
       "roll": 0,
-      "h_fov": 90,
+      "h_fov": 120,
       "v_fov": 70,
       "label": "right"
     },
@@ -46,10 +46,10 @@
       "yaw": 86,
       "pitch": -11,
       "roll": 0,
-      "h_fov": 90,
+      "h_fov": 120,
       "v_fov": 70,
       "label": "back"
     }
   },
-  "updated": "2026-07-22T18:57:30.700Z"
+  "updated": "2026-07-22T22:32:00.000Z"
 }

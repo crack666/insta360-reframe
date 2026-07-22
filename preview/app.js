@@ -20,8 +20,8 @@ const PRESET_COLORS = {
 };
 const LENS_GEARS = {
   default: { id: 'default', label: 'Default', h_fov: null, v_fov: null },
-  linear: { id: 'linear', label: 'Linear', h_fov: 78, v_fov: null },
-  ultra: { id: 'ultra', label: 'Ultra', h_fov: 110, v_fov: null },
+  linear: { id: 'linear', label: 'Linear', h_fov: 95, v_fov: null },
+  ultra: { id: 'ultra', label: 'Ultra', h_fov: 140, v_fov: null },
 };
 const PEEK_NAMES = ['forward', 'selfie', 'left', 'right'];
 const DEFAULT_PRESET = 'forward';
@@ -1132,7 +1132,7 @@ el.view.addEventListener('pointermove', (e) => {
 });
 el.view.addEventListener('wheel', (e) => {
   e.preventDefault();
-  state.fov = clamp(state.fov + Math.sign(e.deltaY) * 3, 40, 120);
+  state.fov = clamp(state.fov + Math.sign(e.deltaY) * 3, 40, 150);
   applyLook();
 }, { passive: false });
 

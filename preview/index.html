@@ -27,9 +27,9 @@
         </div>
         <label>View Angle Gear (Zoom/FOV für nächste Cuts)</label>
         <div class="row lenses" id="lenses">
-          <button type="button" data-lens="default" class="active" title="Preset-/Custom-FOV wie gespeichert">Default</button>
-          <button type="button" data-lens="linear" title="Enger, weniger Weitwinkel (~78°)">Linear</button>
-          <button type="button" data-lens="ultra" title="Weiter, action-cam (~110°)">Ultra</button>
+          <button type="button" data-lens="default" class="active" title="Preset-/Custom-FOV wie gespeichert (~120°)">Default</button>
+          <button type="button" data-lens="linear" title="Etwas enger (~95°)">Linear</button>
+          <button type="button" data-lens="ultra" title="Weiter, action-cam (~140°)">Ultra</button>
         </div>
         <p class="hint">Default = FOV aus Preset/Custom. Linear/Ultra überschreiben nur den Zoom für das Segment — Richtung bleibt.</p>
         <details class="calibrate">
@@ -40,8 +40,8 @@
           <input type="range" id="yaw" min="-180" max="180" step="1" value="0" />
           <label>Pitch <span id="pitchVal">0</span>°</label>
           <input type="range" id="pitch" min="-89" max="89" step="1" value="0" />
-          <label>H-FOV <span id="fovVal">90</span>°</label>
-          <input type="range" id="fov" min="40" max="120" step="1" value="90" />
+          <label>H-FOV <span id="fovVal">120</span>°</label>
+          <input type="range" id="fov" min="40" max="150" step="1" value="120" />
           <div class="row">
             <button type="button" id="savePreset">Speichern</button>
             <button type="button" id="reloadPresets">Neu laden</button>

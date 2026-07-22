@@ -9,12 +9,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const PRESETS_PATH = path.resolve(__dirname, '..', 'presets.json');
 
 const FALLBACK = {
-  forward: { yaw: 0, pitch: -8, roll: 0, h_fov: 90, v_fov: 70, label: 'forward' },
-  selfie: { yaw: 70, pitch: 46, roll: 0, h_fov: 90, v_fov: 65, label: 'selfie' },
-  up: { yaw: 0, pitch: 55, roll: 0, h_fov: 85, v_fov: 65, label: 'up' },
-  left: { yaw: -90, pitch: -5, roll: 0, h_fov: 90, v_fov: 70, label: 'left' },
-  right: { yaw: 90, pitch: -5, roll: 0, h_fov: 90, v_fov: 70, label: 'right' },
-  back: { yaw: 180, pitch: -5, roll: 0, h_fov: 90, v_fov: 70, label: 'back' },
+  forward: { yaw: 0, pitch: -8, roll: 0, h_fov: 120, v_fov: 70, label: 'forward' },
+  selfie: { yaw: 70, pitch: 46, roll: 0, h_fov: 120, v_fov: 65, label: 'selfie' },
+  up: { yaw: 0, pitch: 55, roll: 0, h_fov: 115, v_fov: 65, label: 'up' },
+  left: { yaw: -90, pitch: -5, roll: 0, h_fov: 120, v_fov: 70, label: 'left' },
+  right: { yaw: 90, pitch: -5, roll: 0, h_fov: 120, v_fov: 70, label: 'right' },
+  back: { yaw: 180, pitch: -5, roll: 0, h_fov: 120, v_fov: 70, label: 'back' },
 };
 
 function normalizePreset(name, raw = {}) {
@@ -22,7 +22,7 @@ function normalizePreset(name, raw = {}) {
     yaw: Number(raw.yaw) || 0,
     pitch: Number(raw.pitch) || 0,
     roll: Number(raw.roll) || 0,
-    h_fov: Number(raw.h_fov) || 90,
+    h_fov: Number(raw.h_fov) || 120,
     v_fov: Number(raw.v_fov) || 70,
     label: String(raw.label || name),
   };
@@ -86,8 +86,8 @@ export function resolvePreset(name, presets = loadPresets()) {
  */
 export const LENS_GEARS = {
   default: { id: 'default', label: 'Default', h_fov: null, v_fov: null },
-  linear: { id: 'linear', label: 'Linear', h_fov: 78, v_fov: null },
-  ultra: { id: 'ultra', label: 'Ultra', h_fov: 110, v_fov: null },
+  linear: { id: 'linear', label: 'Linear', h_fov: 95, v_fov: null },
+  ultra: { id: 'ultra', label: 'Ultra', h_fov: 140, v_fov: null },
 };
 
 export function resolveLens(lens) {
@@ -146,7 +146,7 @@ export function hfovToVfov(hfovDeg, aspect) {
 
 export function v360Filter(view, { width = 1280, height = 720 } = {}) {
   const v = toFfmpegView(view);
-  const hFov = Number(v.h_fov) || 90;
+  const hFov = Number(v.h_fov) || 120;
   // Match Three.js PerspectiveCamera: h_fov is source of truth, v_fov follows aspect.
   // (Presets may store a legacy v_fov; ignoring it avoids preview/export zoom mismatch.)
   const vFov = hfovToVfov(hFov, width / Math.max(height, 1));
