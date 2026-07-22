@@ -14,11 +14,18 @@ Equirect (MediaSDK-Stitch) → **flat** MP4 with direction presets for chest-mou
 
 Calibrate once per mount: dump stills with `--yaw/--pitch` overrides. Chest-mount “selfie” is typically **look back + slightly up**, not straight zenith.
 
-## Usage
+## Interactive preview (no full re-render)
+
+Browse the equirect, drag to look, try presets, mark timeline segments, copy a CLI command — then render once.
 
 ```bash
-# Whole clip forward
-node src/cli.mjs -i stitch.mp4 -o flat.mp4 -p forward
+# Prefer a short proxy (e.g. work/011-reframe-smoke/equirect_40s.mp4), not the 3GB full stitch
+npm run preview -- --video "D:/ai/ai-stack/data/insta360/work/011-reframe-smoke/equirect_40s.mp4"
+# → http://127.0.0.1:8787/
+```
+
+- Drag = look · Scroll = FOV · Preset buttons = same angles as CLI
+- **Mark In / Mark Out + Add** builds a timeline string → **Copy CLI cmd**
 
 # Timeline (obstacle highlight = selfie, else forward)
 node src/cli.mjs -i stitch.mp4 -o flat.mp4 \

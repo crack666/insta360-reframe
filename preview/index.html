@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>insta360-reframe preview</title>
+  <link rel="stylesheet" href="/preview/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <h1>Equirect Preview</h1>
+      <p class="hint">Ziehen = gucken · Scroll = FOV · Presets = CLI-Winkel</p>
+
+      <div class="row presets" id="presets"></div>
+
+      <label>Yaw <span id="yawVal">0</span>°</label>
+      <input type="range" id="yaw" min="-180" max="180" step="1" value="0" />
+
+      <label>Pitch <span id="pitchVal">0</span>°</label>
+      <input type="range" id="pitch" min="-89" max="89" step="1" value="0" />
+
+      <label>H-FOV <span id="fovVal">90</span>°</label>
+      <input type="range" id="fov" min="40" max="120" step="1" value="90" />
+
+      <div class="row">
+        <button type="button" id="play">Play/Pause</button>
+        <button type="button" id="markIn">Mark In</button>
+        <button type="button" id="markOut">Mark Out + Add</button>
+      </div>
+
+      <label>Time <span id="timeVal">0:00</span></label>
+      <input type="range" id="seek" min="0" max="1000" step="1" value="0" />
+
+      <h2>Timeline</h2>
+      <textarea id="timeline" rows="5" placeholder="0-12=forward,&#10;12-22=selfie,&#10;22-end=forward"></textarea>
+      <div class="row">
+        <button type="button" id="copyTimeline">Copy timeline</button>
+        <button type="button" id="copyCmd">Copy CLI cmd</button>
+      </div>
+      <pre id="cmd" class="cmd"></pre>
+      <p class="hint" id="status">Loading…</p>
+    </aside>
+    <main id="view"></main>
+  </div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module" src="/preview/app.js"></script>
+</body>
+</html>

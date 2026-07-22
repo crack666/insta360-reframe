@@ -1,0 +1,42 @@
+:root {
+  --bg: #12141a;
+  --panel: #1a1e28;
+  --text: #e8ecf4;
+  --muted: #9aa3b5;
+  --accent: #3d9cf0;
+  --btn: #2a3142;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+
+#app { display: grid; grid-template-columns: 320px 1fr; height: 100%; }
+#panel { background: var(--panel); padding: 16px; overflow: auto; border-right: 1px solid #2c3344; }
+#view { position: relative; min-height: 0; }
+#view canvas { display: block; width: 100%; height: 100%; }
+
+h1 { font-size: 16px; margin: 0 0 4px; font-weight: 650; }
+h2 { font-size: 13px; margin: 16px 0 8px; color: var(--muted); font-weight: 600; }
+.hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+label { display: block; margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+label span { color: var(--text); font-variant-numeric: tabular-nums; }
+
+input[type="range"] { width: 100%; }
+textarea { width: 100%; background: #0e1118; color: var(--text); border: 1px solid #2c3344;
+  border-radius: 6px; padding: 8px; font: 12px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
+
+.row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+button { background: var(--btn); color: var(--text); border: 1px solid #3a4358; border-radius: 6px;
+  padding: 6px 10px; cursor: pointer; font: inherit; }
+button:hover { border-color: var(--accent); }
+button.active { background: #1e4a73; border-color: var(--accent); }
+
+.presets button { flex: 1 1 40%; }
+.cmd { background: #0e1118; border-radius: 6px; padding: 8px; font-size: 11px; white-space: pre-wrap;
+  word-break: break-all; color: #b7c0d3; min-height: 3em; }
+
+@media (max-width: 800px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; }
+  #panel { border-right: 0; border-bottom: 1px solid #2c3344; }
+}
