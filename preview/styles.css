@@ -48,6 +48,7 @@ textarea { font: 12px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .cut-row .primary { grid-column: 1 / -1; }
 .cut-row .custom-cut { grid-column: 1 / -1; border-color: #6a7180; background: #2a2e36; }
 .cut-row .custom-cut.active { border-color: #9aa0a8; background: #3a404c; }
+.cut-row .update-seg { grid-column: 1 / -1; border-color: #3cb89a; }
 .lenses button { flex: 1 1 28%; }
 .lenses button[data-lens="linear"] { border-bottom: 2px solid #7eb8d4; }
 .lenses button[data-lens="ultra"] { border-bottom: 2px solid #e0b35a; }
@@ -89,6 +90,8 @@ details > summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
 .seg-item .swatch { width: 8px; height: 100%; min-height: 28px; border-radius: 4px; }
 .seg-item .meta { font-variant-numeric: tabular-nums; }
 .seg-item .name { font-weight: 600; }
+.seg-actions { display: flex; flex-direction: column; gap: 4px; }
+.seg-actions button { padding: 4px 8px; font-size: 11px; }
 .suggest-item .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .suggest-item .reason { color: var(--muted); font-size: 11px; }
 .suggest-item .actions { display: flex; gap: 6px; margin-top: 4px; }

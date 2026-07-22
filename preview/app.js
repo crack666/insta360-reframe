@@ -63,6 +63,7 @@ const el = {
   removeCut: document.getElementById('removeCut'),
   cutHere: document.getElementById('cutHere'),
   cutCustom: document.getElementById('cutCustom'),
+  updateSeg: document.getElementById('updateSeg'),
   cutForward: document.getElementById('cutForward'),
   cutSelfie: document.getElementById('cutSelfie'),
   analyze: document.getElementById('analyze'),
@@ -238,6 +239,19 @@ function setRange(list, t0, t1, presetOrView, durationSec) {
     if (mid1 > mid0) out.push(cloneSeg({ ...patch, start: mid0, end: mid1 }));
     if (s.end > b) out.push(cloneSeg({ ...s, start: b }));
   }
+  return mergeAdjacent(out);
+}
+
+function updateSegmentAt(list, t, presetOrView, durationSec) {
+  const patch = asPatch(presetOrView);
+  let segs = normalizeSegments(list, durationSec);
+  t = clamp(Number(t) || 0, 0, durationSec);
+  const out = segs.map((s) => {
+    if (t >= s.start - 1e-6 && t < s.end - 1e-6) {
+      return cloneSeg({ ...patch, start: s.start, end: s.end });
+    }
+    return s;
+  });
   return mergeAdjacent(out);
 }
 
@@ -585,6 +599,34 @@ function doCutCustom() {
   doCut({ yaw: state.yaw, pitch: state.pitch, h_fov: state.fov });
 }
 
+/** Current UI look as a timeline patch (named preset if it still matches, else custom). */
+function viewPatchFromUi() {
+  const named = state.preset !== 'custom' ? PRESETS[state.preset] : null;
+  if (
+    named
+    && Math.abs(named.yaw - state.yaw) < 1.5
+    && Math.abs(named.pitch - state.pitch) < 1.5
+    && Math.abs((named.h_fov || 120) - state.fov) < 2
+  ) {
+    return withActiveLens(state.preset);
+  }
+  return withActiveLens({
+    yaw: state.yaw,
+    pitch: state.pitch,
+    h_fov: state.fov,
+  });
+}
+
+function updateCurrentSegment() {
+  const t = video.currentTime || 0;
+  const before = segmentAt(segments, t);
+  const patch = viewPatchFromUi();
+  segments = updateSegmentAt(segments, t, patch, state.duration);
+  syncFromSegments();
+  const after = segmentAt(segments, t);
+  el.status.textContent = `Segment ${fmtTime(before.start)}–${fmtTime(before.end)} aktualisiert → ${segLabel(after)}`;
+}
+
 function setPreset(name) {
   const p = PRESETS[name];
   if (!p) return;
@@ -706,11 +748,24 @@ function renderSegList() {
       <div class="swatch" style="background:${colorFor(s.preset)}"></div>
       <div class="meta"><div class="name">${segLabel(s)}</div>
       <div>${fmtTime(s.start)} – ${fmtTime(s.end)}</div></div>
-      <button type="button" data-act="jump">Gehe hin</button>`;
+      <div class="seg-actions">
+        <button type="button" data-act="jump">Gehe hin</button>
+        <button type="button" data-act="apply" title="Aktuellen Blick + Lens auf dieses Segment schreiben">Updaten</button>
+      </div>`;
     row.querySelector('[data-act="jump"]').addEventListener('click', (e) => {
       e.stopPropagation();
       video.currentTime = s.start + 0.05;
       syncViewToPlayhead({ force: true });
+    });
+    row.querySelector('[data-act="apply"]').addEventListener('click', (e) => {
+      e.stopPropagation();
+      video.currentTime = Math.min(s.end - 0.05, Math.max(s.start + 0.05, video.currentTime || s.start));
+      // ensure playhead inside this segment, then update
+      const mid = (s.start + s.end) / 2;
+      if ((video.currentTime || 0) < s.start || (video.currentTime || 0) >= s.end) {
+        video.currentTime = mid;
+      }
+      updateCurrentSegment();
     });
     row.addEventListener('click', () => {
       video.currentTime = s.start + 0.05;
@@ -936,6 +991,7 @@ el.rates.addEventListener('click', (e) => {
 
 el.cutHere.addEventListener('click', () => doCut(state.preset));
 el.cutCustom.addEventListener('click', () => doCutCustom());
+el.updateSeg?.addEventListener('click', () => updateCurrentSegment());
 el.cutForward.addEventListener('click', () => doCut('forward'));
 el.cutSelfie.addEventListener('click', () => doCut('selfie'));
 
@@ -1151,6 +1207,9 @@ window.addEventListener('keydown', (e) => {
   } else if (e.key === 'x' || e.key === 'X') {
     e.preventDefault();
     doCutCustom();
+  } else if (e.key === 'u' || e.key === 'U') {
+    e.preventDefault();
+    updateCurrentSegment();
   } else if (e.key === 'f' || e.key === 'F') {
     doCut('forward');
   } else if (e.key === 's' || e.key === 'S') {

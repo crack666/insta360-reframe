@@ -299,6 +299,23 @@ export function setRange(segments, t0, t1, presetOrView, durationSec, defaultPre
   return mergeAdjacent(out);
 }
 
+/**
+ * Replace the view of the segment under time t (start/end unchanged).
+ */
+export function updateSegmentAt(segments, t, presetOrView, durationSec, defaultPreset = 'forward') {
+  const dur = Math.max(0, durationSec);
+  const patch = asPatch(presetOrView);
+  let segs = normalizeSegments(segments, dur, defaultPreset);
+  t = Math.max(0, Math.min(Number(t) || 0, dur));
+  const out = segs.map((s) => {
+    if (t >= s.start - 1e-6 && t < s.end - 1e-6) {
+      return cloneSeg({ ...patch, start: s.start, end: s.end });
+    }
+    return s;
+  });
+  return mergeAdjacent(out);
+}
+
 /** Segment covering time t. */
 export function segmentAt(segments, t, defaultPreset = 'forward') {
   for (const s of segments) {

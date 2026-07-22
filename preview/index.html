@@ -22,9 +22,11 @@
         <div class="cut-row">
           <button type="button" id="cutHere" class="primary">Cut hier → aktives Preset</button>
           <button type="button" id="cutCustom" class="custom-cut">Cut → custom Blick</button>
+          <button type="button" id="updateSeg" class="update-seg">Segment am Playhead aktualisieren</button>
           <button type="button" id="cutForward">→ forward</button>
           <button type="button" id="cutSelfie">→ selfie</button>
         </div>
+        <p class="hint"><kbd>U</kbd> = aktuelles Segment überschreiben (Blick + Lens), ohne neuen Cut.</p>
         <label>View Angle Gear (Zoom/FOV für nächste Cuts)</label>
         <div class="row lenses" id="lenses">
           <button type="button" data-lens="default" class="active" title="Preset-/Custom-FOV wie gespeichert (~120°)">Default</button>
@@ -125,7 +127,7 @@
       </section>
 
       <p class="hint shortcuts">
-        <kbd>Space</kbd> Play · <kbd>C</kbd> Cut Preset · <kbd>X</kbd> Cut custom ·
+        <kbd>Space</kbd> Play · <kbd>C</kbd> Cut Preset · <kbd>X</kbd> Cut custom · <kbd>U</kbd> Segment updaten ·
         <kbd>F</kbd>/<kbd>S</kbd> forward/selfie ·
         <kbd>1</kbd><kbd>2</kbd><kbd>4</kbd> Tempo · <kbd>[</kbd><kbd>]</kbd> ±5s · <kbd>Del</kbd> Cut weg
       </p>
