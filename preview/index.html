@@ -126,6 +126,41 @@
         </details>
       </section>
 
+      <section class="export-section">
+        <h2>4 · Export Flat</h2>
+        <p class="hint">Rendert genau die aktuelle Timeline als flaches MP4 (wie Preview, inkl. Lens-Gear).</p>
+        <label>Auflösung</label>
+        <div class="row" id="exportRes">
+          <button type="button" data-w="1280" data-h="720">720p</button>
+          <button type="button" data-w="1920" data-h="1080" class="active">1080p</button>
+          <button type="button" data-w="2560" data-h="1440">1440p</button>
+        </div>
+        <label>Codec</label>
+        <div class="row" id="exportCodec">
+          <button type="button" data-codec="h264" class="active">H.264</button>
+          <button type="button" data-codec="hevc" id="exportHevc" disabled title="Prüfe Encoder…">H.265 / HEVC</button>
+        </div>
+        <label>Qualität</label>
+        <div class="row" id="exportQuality">
+          <button type="button" data-q="draft">Draft</button>
+          <button type="button" data-q="medium" class="active">Medium</button>
+          <button type="button" data-q="high">High</button>
+        </div>
+        <details class="export-advanced">
+          <summary>Erweitert (Bitrate / Pfad)</summary>
+          <label>Bitrate (optional, z.B. 8M) — überschreibt Qualität</label>
+          <input type="text" id="exportBitrate" placeholder="leer = CQ/CRF nach Qualität" />
+          <label>Ausgabe-Pfad</label>
+          <input type="text" id="exportPath" placeholder="…_flat.mp4" />
+        </details>
+        <button type="button" id="exportBtn" class="primary export-btn">Export Flat Video</button>
+        <div class="export-progress" id="exportProgressWrap" hidden>
+          <div class="bar"><div id="exportBar"></div></div>
+          <p class="hint" id="exportMsg"></p>
+          <pre class="cmd" id="exportLog"></pre>
+        </div>
+      </section>
+
       <p class="hint shortcuts">
         <kbd>Space</kbd> Play · <kbd>C</kbd> Cut Preset · <kbd>X</kbd> Cut custom · <kbd>U</kbd> Segment updaten ·
         <kbd>F</kbd>/<kbd>S</kbd> forward/selfie ·

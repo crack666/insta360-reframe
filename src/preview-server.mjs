@@ -13,6 +13,8 @@ import { spawn } from 'node:child_process';
 import { loadPresetsDoc, savePresetsDoc, updatePreset, PRESETS_PATH } from './presets.mjs';
 import { analyzeSuggestions } from './suggest.mjs';
 import { parseTimeline, serializeTimeline } from './timeline.mjs';
+import { exportFlat } from './export.mjs';
+import { listEncoders } from './ffmpeg.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -21,6 +23,18 @@ const PREVIEW = path.join(ROOT, 'preview');
 function timelinePathFor(video) {
   return `${video}.timeline.json`;
 }
+
+/** In-memory export job status for the UI. */
+let exportJob = {
+  running: false,
+  progress: 0,
+  message: '',
+  log: [],
+  output: null,
+  error: null,
+  startedAt: null,
+  finishedAt: null,
+};
 
 function parseArgs(argv) {
   const opts = { video: null, port: 8787, open: true };
@@ -218,6 +232,134 @@ const server = http.createServer(async (req, res) => {
       const suggestPath = `${videoPath}.suggestions.json`;
       fs.writeFileSync(suggestPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
       json(res, 200, { ok: true, path: suggestPath, ...result });
+      return;
+    }
+
+    if (url.pathname === '/api/export/options' && method === 'GET') {
+      const encoders = await listEncoders();
+      const base = path.basename(videoPath, path.extname(videoPath));
+      const defaultOut = path.join(path.dirname(videoPath), `${base}_flat.mp4`);
+      json(res, 200, {
+        ok: true,
+        encoders,
+        codecs: [
+          { id: 'h264', label: 'H.264', available: encoders.h264_nvenc || encoders.libx264 },
+          { id: 'hevc', label: 'H.265 / HEVC', available: encoders.hevc_nvenc || encoders.libx265 },
+        ],
+        resolutions: [
+          { id: '720p', width: 1280, height: 720, label: '1280×720' },
+          { id: '1080p', width: 1920, height: 1080, label: '1920×1080' },
+          { id: '1440p', width: 2560, height: 1440, label: '2560×1440' },
+        ],
+        qualities: [
+          { id: 'draft', label: 'Draft (schnell)' },
+          { id: 'medium', label: 'Medium' },
+          { id: 'high', label: 'High' },
+        ],
+        defaultOutput: defaultOut,
+      });
+      return;
+    }
+
+    if (url.pathname === '/api/export/status' && method === 'GET') {
+      json(res, 200, { ok: true, ...exportJob, log: exportJob.log.slice(-40) });
+      return;
+    }
+
+    if (url.pathname === '/api/export' && method === 'POST') {
+      if (exportJob.running) {
+        json(res, 409, { ok: false, error: 'Export läuft bereits', ...exportJob });
+        return;
+      }
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        if (raw.trim()) body = JSON.parse(raw);
+      } catch {
+        body = {};
+      }
+
+      // Persist timeline first if provided
+      if (Array.isArray(body.segments) && body.segments.length) {
+        const p = timelinePathFor(videoPath);
+        const timelineStr = body.timeline || serializeTimeline(body.segments);
+        const doc = {
+          version: 1,
+          video: videoPath,
+          timeline: timelineStr,
+          segments: body.segments,
+          updated: new Date().toISOString(),
+        };
+        fs.writeFileSync(p, `${JSON.stringify(doc, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(`${videoPath}.timeline.txt`, `${timelineStr.replace(/,/g, '\n')}\n`, 'utf8');
+      }
+
+      const base = path.basename(videoPath, path.extname(videoPath));
+      const output = path.resolve(
+        body.output || path.join(path.dirname(videoPath), `${base}_flat.mp4`),
+      );
+      const width = Number(body.width) || 1920;
+      const height = Number(body.height) || 1080;
+
+      exportJob = {
+        running: true,
+        progress: 0,
+        message: 'Starte Export…',
+        log: [],
+        output,
+        error: null,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+      };
+
+      json(res, 202, { ok: true, started: true, output });
+
+      // Run async after response
+      setImmediate(async () => {
+        try {
+          await exportFlat({
+            input: videoPath,
+            output,
+            segments: body.segments,
+            width,
+            height,
+            codec: body.codec || 'h264',
+            quality: body.quality || 'medium',
+            bitrate: body.bitrate || null,
+            audioBitrate: body.audioBitrate || '160k',
+            onProgress: (ev) => {
+              if (ev.type === 'start') {
+                exportJob.message = `${ev.width}×${ev.height} · ${ev.encoder} · ${ev.segments} Segmente`;
+                exportJob.log.push(exportJob.message);
+                exportJob.progress = 0.02;
+              } else if (ev.type === 'segment') {
+                exportJob.progress = (ev.index + 0.5) / Math.max(ev.total, 1);
+                exportJob.message = `Segment ${ev.index + 1}/${ev.total}: ${ev.preset}` +
+                  (ev.lens !== 'default' ? `+${ev.lens}` : '');
+                exportJob.log.push(exportJob.message);
+              } else if (ev.type === 'concat') {
+                exportJob.progress = 0.95;
+                exportJob.message = 'Zusammenfügen…';
+              } else if (ev.type === 'done') {
+                exportJob.progress = 1;
+                exportJob.message = `Fertig: ${ev.output}`;
+                exportJob.log.push(`done ${(ev.size / 1e6).toFixed(1)} MB`);
+              } else if (ev.type === 'info') {
+                exportJob.log.push(ev.message);
+              }
+            },
+          });
+          exportJob.running = false;
+          exportJob.finishedAt = new Date().toISOString();
+          exportJob.progress = 1;
+        } catch (err) {
+          exportJob.running = false;
+          exportJob.error = String(err.message || err);
+          exportJob.message = `Fehler: ${exportJob.error}`;
+          exportJob.finishedAt = new Date().toISOString();
+          exportJob.log.push(exportJob.message);
+        }
+      });
       return;
     }
 

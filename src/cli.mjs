@@ -2,23 +2,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPresets, resolveSegmentView } from './presets.mjs';
-import { parseTimeline, resolveTimeline } from './timeline.mjs';
-import {
-  probeDuration,
-  pickVideoEncoder,
-  encodeSegment,
-  concatSegments,
-} from './ffmpeg.mjs';
+import { loadPresets } from './presets.mjs';
+import { exportFlat } from './export.mjs';
+import { listEncoders } from './ffmpeg.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function usage() {
   console.log(`
 insta360-reframe — Equirect → flat with direction presets
-
-Chest-mount jogging / obstacle course workflow:
-  MediaSDK stitch (equirect) → this tool → flat deliverable
 
 USAGE:
   node src/cli.mjs --input equirect.mp4 --output flat.mp4 [options]
@@ -28,19 +20,23 @@ OPTIONS:
   --output, -o      Flat MP4 output
   --preset, -p      Single preset for whole clip (default: forward)
                     ${Object.keys(loadPresets()).join(' | ')}
-  --timeline, -t    Segment list, e.g.
-                    "0-90=forward,90-120=selfie,120-150=custom@70/20/90"
-  --timeline-file   File with one segment per line
-  --width           Flat width (default 1280)
-  --height          Flat height (default 720)
-  --yaw/--pitch/--fov   Override preset yaw / pitch / h_fov (single-preset mode)
+  --timeline, -t    Segment list
+  --timeline-file   File (.txt or .timeline.json)
+  --width           Flat width (default 1920)
+  --height          Flat height (default 1080)
+  --codec           h264 | hevc  (default h264; hevc = H.265 when available)
+  --quality         draft | medium | high  (CQ/CRF mode, default medium)
+  --bitrate         e.g. 8M / 12M — if set, overrides quality CQ/CRF
+  --audio-bitrate   e.g. 160k (default)
+  --yaw/--pitch/--fov   Override (single-preset mode only via timeline empty)
   --work-dir        Temp segment dir (default: <output>.work)
   --list-presets    Print presets and exit
+  --list-encoders   Print available encoders and exit
   -h, --help
 
 EXAMPLES:
-  node src/cli.mjs -i stitch.mp4 -o out.mp4 -p forward
-  node src/cli.mjs -i stitch.mp4 -o out.mp4 -t "0:00-2:00=forward,2:00-2:20=selfie,2:20-end=forward"
+  node src/cli.mjs -i stitch.mp4 -o out.mp4
+  node src/cli.mjs -i stitch.mp4 -o out.mp4 --width 1920 --height 1080 --codec hevc --quality high
 `);
 }
 
@@ -51,13 +47,15 @@ function parseArgs(argv) {
     preset: 'forward',
     timeline: null,
     timelineFile: null,
-    width: 1280,
-    height: 720,
-    yaw: null,
-    pitch: null,
-    fov: null,
+    width: 1920,
+    height: 1080,
+    codec: 'h264',
+    quality: 'medium',
+    bitrate: null,
+    audioBitrate: '160k',
     workDir: null,
     listPresets: false,
+    listEncoders: false,
     help: false,
   };
   const a = argv.slice(2);
@@ -67,6 +65,7 @@ function parseArgs(argv) {
     switch (x) {
       case '-h': case '--help': opts.help = true; break;
       case '--list-presets': opts.listPresets = true; break;
+      case '--list-encoders': opts.listEncoders = true; break;
       case '-i': case '--input': opts.input = next(); break;
       case '-o': case '--output': opts.output = next(); break;
       case '-p': case '--preset': opts.preset = next(); break;
@@ -74,9 +73,10 @@ function parseArgs(argv) {
       case '--timeline-file': opts.timelineFile = next(); break;
       case '--width': opts.width = parseInt(next(), 10); break;
       case '--height': opts.height = parseInt(next(), 10); break;
-      case '--yaw': opts.yaw = parseFloat(next()); break;
-      case '--pitch': opts.pitch = parseFloat(next()); break;
-      case '--fov': opts.fov = parseFloat(next()); break;
+      case '--codec': opts.codec = next(); break;
+      case '--quality': opts.quality = next(); break;
+      case '--bitrate': opts.bitrate = next(); break;
+      case '--audio-bitrate': opts.audioBitrate = next(); break;
       case '--work-dir': opts.workDir = next(); break;
       default:
         if (x.startsWith('-')) throw new Error(`Unknown option: ${x}`);
@@ -97,103 +97,36 @@ async function main() {
     }
     return;
   }
+  if (opts.listEncoders) {
+    console.log(await listEncoders());
+    return;
+  }
   if (!opts.input || !opts.output) {
     usage();
     process.exit(1);
   }
-  if (!fs.existsSync(opts.input)) {
-    throw new Error(`Input not found: ${opts.input}`);
-  }
 
-  const duration = await probeDuration(opts.input);
-  let segments = null;
-  let timelineSpec = opts.timeline;
-
-  function loadSegmentsFromJson(doc) {
-    if (Array.isArray(doc.segments) && doc.segments.length) {
-      return resolveTimeline(doc.segments, duration);
-    }
-    if (doc.timeline) return resolveTimeline(parseTimeline(doc.timeline), duration);
-    return null;
-  }
-
-  if (opts.timelineFile) {
-    const raw = fs.readFileSync(opts.timelineFile, 'utf8');
-    if (opts.timelineFile.endsWith('.json')) {
-      segments = loadSegmentsFromJson(JSON.parse(raw));
-    } else {
-      timelineSpec = raw;
-    }
-  } else if (!timelineSpec) {
-    const jsonSide = `${opts.input}.timeline.json`;
-    const txtSide = `${opts.input}.timeline.txt`;
-    if (fs.existsSync(jsonSide)) {
-      segments = loadSegmentsFromJson(JSON.parse(fs.readFileSync(jsonSide, 'utf8')));
-      console.log(`timeline: ${jsonSide}`);
-    } else if (fs.existsSync(txtSide)) {
-      timelineSpec = fs.readFileSync(txtSide, 'utf8');
-      console.log(`timeline: ${txtSide}`);
-    }
-  }
-
-  if (!segments) {
-    if (timelineSpec) {
-      segments = resolveTimeline(parseTimeline(timelineSpec), duration);
-    } else {
-      segments = [{ start: 0, end: duration, preset: opts.preset }];
-    }
-  }
-
-  function viewForSegment(seg) {
-    return resolveSegmentView(seg);
-  }
-
-  const encoder = await pickVideoEncoder();
-  const workDir = opts.workDir || `${opts.output}.work`;
-  fs.mkdirSync(workDir, { recursive: true });
-  fs.mkdirSync(path.dirname(path.resolve(opts.output)), { recursive: true });
-
-  console.log(`input:    ${opts.input}`);
-  console.log(`duration: ${duration.toFixed(1)}s`);
-  console.log(`encoder:  ${encoder.video}`);
-  console.log(`segments: ${segments.length}`);
-
-  const partFiles = [];
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    let view = viewForSegment(seg);
-    if (segments.length === 1) {
-      if (opts.yaw != null) view = { ...view, yaw: opts.yaw };
-      if (opts.pitch != null) view = { ...view, pitch: opts.pitch };
-      if (opts.fov != null) view = { ...view, h_fov: opts.fov };
-    }
-    const tag = seg.preset === 'custom' ? 'custom' : seg.preset;
-    const lensTag = seg.lens && seg.lens !== 'default' ? `+${seg.lens}` : '';
-    const part = path.join(workDir, `seg_${String(i).padStart(3, '0')}_${tag}${lensTag.replace('+', '_')}.mp4`);
-    console.log(
-      `  [${i + 1}/${segments.length}] ${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s  ${tag}${lensTag}` +
-      `  (yaw=${view.yaw} pitch=${view.pitch} fov=${view.h_fov})`,
-    );
-    await encodeSegment({
-      input: opts.input,
-      output: part,
-      start: seg.start,
-      end: seg.end,
-      view,
-      width: opts.width,
-      height: opts.height,
-      encoder,
-    });
-    partFiles.push(part);
-  }
-
-  if (partFiles.length === 1) {
-    fs.copyFileSync(partFiles[0], opts.output);
-  } else {
-    await concatSegments(partFiles, opts.output, workDir);
-  }
-
-  console.log(`done: ${opts.output}`);
+  const result = await exportFlat({
+    ...opts,
+    onProgress: (ev) => {
+      if (ev.type === 'start') {
+        console.log(`input:    ${opts.input}`);
+        console.log(`duration: ${ev.duration.toFixed(1)}s`);
+        console.log(`encoder:  ${ev.encoder}`);
+        console.log(`size:     ${ev.width}x${ev.height}`);
+        console.log(`segments: ${ev.segments}`);
+      } else if (ev.type === 'segment') {
+        console.log(
+          `  [${ev.index + 1}/${ev.total}] ${ev.start.toFixed(1)}–${ev.end.toFixed(1)}s  ${ev.preset}` +
+          (ev.lens !== 'default' ? `+${ev.lens}` : '') +
+          `  (yaw=${ev.view.yaw} pitch=${ev.view.pitch} fov=${ev.view.h_fov})`,
+        );
+      } else if (ev.type === 'done') {
+        console.log(`done: ${ev.output} (${(ev.size / 1e6).toFixed(1)} MB)`);
+      }
+    },
+  });
+  return result;
 }
 
 main().catch((err) => {

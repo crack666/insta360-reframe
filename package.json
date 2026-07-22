@@ -9,7 +9,8 @@
   },
   "scripts": {
     "preview": "node src/preview-server.mjs",
-    "reframe": "node src/cli.mjs"
+    "reframe": "node src/cli.mjs",
+    "project": "node src/project-cli.mjs"
   },
   "engines": {
     "node": ">=20"

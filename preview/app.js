@@ -86,6 +86,17 @@ const el = {
   videoName: document.getElementById('videoName'),
   activeSeg: document.getElementById('activeSeg'),
   rates: document.getElementById('rates'),
+  exportRes: document.getElementById('exportRes'),
+  exportCodec: document.getElementById('exportCodec'),
+  exportQuality: document.getElementById('exportQuality'),
+  exportBitrate: document.getElementById('exportBitrate'),
+  exportPath: document.getElementById('exportPath'),
+  exportHevc: document.getElementById('exportHevc'),
+  exportBtn: document.getElementById('exportBtn'),
+  exportProgressWrap: document.getElementById('exportProgressWrap'),
+  exportBar: document.getElementById('exportBar'),
+  exportMsg: document.getElementById('exportMsg'),
+  exportLog: document.getElementById('exportLog'),
 };
 
 /** @type {Record<string, {yaw:number,pitch:number,h_fov:number,v_fov?:number,roll?:number,label:string}>} */
@@ -1167,6 +1178,156 @@ el.applyProposed.addEventListener('click', () => {
 });
 
 bindAnalyzeOptionLabels();
+
+/** Export panel state */
+const exportOpts = {
+  width: 1920,
+  height: 1080,
+  codec: 'h264',
+  quality: 'medium',
+};
+let exportPollTimer = null;
+
+function bindToggleGroup(container, attr, onPick) {
+  if (!container) return;
+  container.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn || btn.disabled) return;
+    for (const b of container.querySelectorAll('button')) b.classList.remove('active');
+    btn.classList.add('active');
+    onPick(btn);
+  });
+}
+
+bindToggleGroup(el.exportRes, 'data-w', (btn) => {
+  exportOpts.width = Number(btn.dataset.w);
+  exportOpts.height = Number(btn.dataset.h);
+});
+bindToggleGroup(el.exportCodec, 'data-codec', (btn) => {
+  exportOpts.codec = btn.dataset.codec;
+});
+bindToggleGroup(el.exportQuality, 'data-q', (btn) => {
+  exportOpts.quality = btn.dataset.q;
+});
+
+async function loadExportOptions() {
+  try {
+    const r = await fetch('/api/export/options', { cache: 'no-store' });
+    const doc = await r.json();
+    if (!r.ok || !doc.ok) return;
+    if (doc.defaultOutput && el.exportPath && !el.exportPath.value) {
+      el.exportPath.value = doc.defaultOutput;
+    }
+    const hevc = doc.codecs?.find((c) => c.id === 'hevc');
+    if (el.exportHevc) {
+      if (hevc?.available) {
+        el.exportHevc.disabled = false;
+        el.exportHevc.title = 'H.265 / HEVC';
+      } else {
+        el.exportHevc.disabled = true;
+        el.exportHevc.title = 'Kein HEVC-Encoder (hevc_nvenc / libx265) gefunden';
+      }
+    }
+    const parts = [];
+    if (doc.encoders?.h264_nvenc) parts.push('h264_nvenc');
+    else if (doc.encoders?.libx264) parts.push('libx264');
+    if (doc.encoders?.hevc_nvenc) parts.push('hevc_nvenc');
+    else if (doc.encoders?.libx265) parts.push('libx265');
+    if (el.exportMsg && parts.length) {
+      el.exportMsg.textContent = `Encoder: ${parts.join(', ')}`;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function setExportUi({ running, progress, message, error, output, log }) {
+  if (el.exportProgressWrap) el.exportProgressWrap.hidden = false;
+  if (el.exportBar) el.exportBar.style.width = `${Math.round((progress || 0) * 100)}%`;
+  if (el.exportMsg) {
+    el.exportMsg.textContent = error
+      ? `Fehler: ${error}`
+      : (message || (running ? 'Export läuft…' : 'Fertig'));
+  }
+  if (el.exportLog && Array.isArray(log)) {
+    el.exportLog.textContent = log.slice(-12).join('\n');
+  }
+  if (el.exportBtn) el.exportBtn.disabled = !!running;
+  if (!running && !error && output) {
+    el.status.textContent = `Export fertig → ${output}`;
+  }
+}
+
+function stopExportPoll() {
+  if (exportPollTimer) {
+    clearInterval(exportPollTimer);
+    exportPollTimer = null;
+  }
+}
+
+function startExportPoll() {
+  stopExportPoll();
+  exportPollTimer = setInterval(async () => {
+    try {
+      const r = await fetch('/api/export/status', { cache: 'no-store' });
+      const doc = await r.json();
+      if (!r.ok) return;
+      setExportUi(doc);
+      if (!doc.running) stopExportPoll();
+    } catch {
+      /* ignore */
+    }
+  }, 800);
+}
+
+el.exportBtn?.addEventListener('click', async () => {
+  if (!segments.length) {
+    el.status.textContent = 'Keine Segmente zum Exportieren';
+    return;
+  }
+  el.exportBtn.disabled = true;
+  setExportUi({ running: true, progress: 0.01, message: 'Starte Export…', log: [] });
+  try {
+    await saveTimelineToServer({ quiet: true });
+    const bitrate = (el.exportBitrate?.value || '').trim() || null;
+    const output = (el.exportPath?.value || '').trim() || undefined;
+    const r = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        segments,
+        timeline: serializeTimeline(segments),
+        width: exportOpts.width,
+        height: exportOpts.height,
+        codec: exportOpts.codec,
+        quality: exportOpts.quality,
+        bitrate,
+        output,
+      }),
+    });
+    const doc = await r.json();
+    if (r.status === 409) {
+      setExportUi({
+        running: true,
+        progress: doc.progress || 0,
+        message: doc.message || 'Export läuft bereits',
+        log: doc.log,
+      });
+      startExportPoll();
+      return;
+    }
+    if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
+    if (doc.output && el.exportPath) el.exportPath.value = doc.output;
+    el.status.textContent = `Export gestartet → ${doc.output}`;
+    startExportPoll();
+  } catch (err) {
+    setExportUi({ running: false, progress: 0, error: String(err.message || err) });
+    el.status.textContent = `Export fehlgeschlagen: ${err.message || err}`;
+    el.exportBtn.disabled = false;
+  }
+});
+
+loadExportOptions();
 
 el.view.addEventListener('pointerdown', (e) => {
   state.dragging = true;
