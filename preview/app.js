@@ -20,8 +20,8 @@ const PRESET_COLORS = {
 };
 const LENS_GEARS = {
   default: { id: 'default', label: 'Default', h_fov: null, v_fov: null },
-  linear: { id: 'linear', label: 'Linear', h_fov: 78, v_fov: 50 },
-  ultra: { id: 'ultra', label: 'Ultra', h_fov: 110, v_fov: 78 },
+  linear: { id: 'linear', label: 'Linear', h_fov: 78, v_fov: null },
+  ultra: { id: 'ultra', label: 'Ultra', h_fov: 110, v_fov: null },
 };
 const PEEK_NAMES = ['forward', 'selfie', 'left', 'right'];
 const DEFAULT_PRESET = 'forward';
@@ -417,6 +417,13 @@ function buildPeek() {
   }
 }
 
+function hfovToVfov(hfovDeg, aspect) {
+  const h = (Number(hfovDeg) * Math.PI) / 180;
+  const a = Math.max(Number(aspect) || 16 / 9, 0.05);
+  const v = 2 * Math.atan(Math.tan(h / 2) / a);
+  return (v * 180) / Math.PI;
+}
+
 function applyPeekCameras() {
   for (const pv of peekViews) {
     const p = PRESETS[pv.name];
@@ -424,7 +431,8 @@ function applyPeekCameras() {
     pv.camera.rotation.order = 'YXZ';
     pv.camera.rotation.y = deg(-p.yaw);
     pv.camera.rotation.x = deg(p.pitch);
-    pv.camera.fov = p.h_fov;
+    // h_fov is horizontal; Three.js wants vertical
+    pv.camera.fov = hfovToVfov(p.h_fov, pv.camera.aspect || 16 / 9);
     pv.camera.updateProjectionMatrix();
     pv.card.classList.toggle('active', state.preset === pv.name);
   }
@@ -434,7 +442,8 @@ function applyLook() {
   camera.rotation.order = 'YXZ';
   camera.rotation.y = deg(-state.yaw);
   camera.rotation.x = deg(state.pitch);
-  camera.fov = state.fov;
+  // state.fov is horizontal FOV (same as presets h_fov / CLI)
+  camera.fov = hfovToVfov(state.fov, camera.aspect || 16 / 9);
   camera.updateProjectionMatrix();
   el.yaw.value = String(state.yaw);
   el.pitch.value = String(state.pitch);

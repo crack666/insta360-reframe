@@ -86,8 +86,8 @@ export function resolvePreset(name, presets = loadPresets()) {
  */
 export const LENS_GEARS = {
   default: { id: 'default', label: 'Default', h_fov: null, v_fov: null },
-  linear: { id: 'linear', label: 'Linear', h_fov: 78, v_fov: 50 },
-  ultra: { id: 'ultra', label: 'Ultra', h_fov: 110, v_fov: 78 },
+  linear: { id: 'linear', label: 'Linear', h_fov: 78, v_fov: null },
+  ultra: { id: 'ultra', label: 'Ultra', h_fov: 110, v_fov: null },
 };
 
 export function resolveLens(lens) {
@@ -136,15 +136,27 @@ export function toFfmpegView(view) {
   };
 }
 
+/** Horizontal FOV → vertical FOV for a rectilinear camera with given aspect (w/h). */
+export function hfovToVfov(hfovDeg, aspect) {
+  const h = (Number(hfovDeg) * Math.PI) / 180;
+  const a = Math.max(Number(aspect) || 16 / 9, 0.05);
+  const v = 2 * Math.atan(Math.tan(h / 2) / a);
+  return (v * 180) / Math.PI;
+}
+
 export function v360Filter(view, { width = 1280, height = 720 } = {}) {
   const v = toFfmpegView(view);
+  const hFov = Number(v.h_fov) || 90;
+  // Match Three.js PerspectiveCamera: h_fov is source of truth, v_fov follows aspect.
+  // (Presets may store a legacy v_fov; ignoring it avoids preview/export zoom mismatch.)
+  const vFov = hfovToVfov(hFov, width / Math.max(height, 1));
   return [
     `v360=input=e:output=flat`,
     `yaw=${v.yaw}`,
     `pitch=${v.pitch}`,
     `roll=${v.roll ?? 0}`,
-    `h_fov=${v.h_fov}`,
-    `v_fov=${v.v_fov ?? 70}`,
+    `h_fov=${hFov}`,
+    `v_fov=${vFov}`,
     `w=${width}`,
     `h=${height}`,
   ].join(':');
