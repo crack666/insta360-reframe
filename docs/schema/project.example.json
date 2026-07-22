@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "id": "example-session",
+  "label": "Example session",
+  "created": "2026-07-23T00:00:00.000Z",
+  "updated": "2026-07-23T00:00:00.000Z",
+  "takes": ["011"],
+  "concatFinals": false,
+  "_comment": "Schema example — real projects live under INSTA360_ROOT/projects/<id>/project.json"
+}

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "id": "011",
+  "label": "Take 011",
+  "raw": [
+    "D:/ai/ai-stack/data/insta360/inbox/VID_20181002_033037_00_011.insv"
+  ],
+  "status": "draft",
+  "error": null,
+  "proxy": null,
+  "timeline": null,
+  "final": {
+    "path": null,
+    "width": 1920,
+    "height": 1080,
+    "codec": "h264",
+    "quality": "high"
+  },
+  "stitch": {
+    "flowstate": true,
+    "directionLock": true,
+    "proxyOutputSize": "1920x960",
+    "finalOutputSize": "3840x1920"
+  },
+  "updated": "2026-07-23T00:00:00.000Z",
+  "_comment": "Statuses: draft | stitching_proxy | proxy_ready | editing | rendering_final | done | error"
+}
