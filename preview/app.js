@@ -16,6 +16,7 @@ const PRESET_COLORS = {
   left: '#9b7ebd',
   right: '#f2cc8f',
   back: '#6c757d',
+  custom: '#9aa0a8',
 };
 const PEEK_NAMES = ['forward', 'selfie', 'left', 'right'];
 const DEFAULT_PRESET = 'forward';
@@ -50,6 +51,7 @@ const el = {
   resetTimeline: document.getElementById('resetTimeline'),
   removeCut: document.getElementById('removeCut'),
   cutHere: document.getElementById('cutHere'),
+  cutCustom: document.getElementById('cutCustom'),
   cutForward: document.getElementById('cutForward'),
   cutSelfie: document.getElementById('cutSelfie'),
   analyze: document.getElementById('analyze'),
@@ -106,15 +108,38 @@ const state = {
   followPreset: null,
 };
 
-// —— Timeline helpers (mirror server) ——
+// —— Timeline helpers (mirror server; supports custom@yaw,pitch,fov) ——
+function cloneSeg(s) {
+  const out = {
+    start: s.start,
+    end: s.end,
+    preset: String(s.preset || DEFAULT_PRESET).toLowerCase(),
+  };
+  if (out.preset === 'custom') {
+    out.yaw = Number(s.yaw) || 0;
+    out.pitch = Number(s.pitch) || 0;
+    out.h_fov = Number(s.h_fov ?? s.fov) || 90;
+    out.roll = Number(s.roll) || 0;
+  }
+  return out;
+}
+
+function sameView(a, b) {
+  if (!a || !b || a.preset !== b.preset) return false;
+  if (a.preset === 'custom') {
+    return a.yaw === b.yaw && a.pitch === b.pitch && a.h_fov === b.h_fov;
+  }
+  return true;
+}
+
 function mergeAdjacent(list, eps = 0.05) {
   if (!list.length) return [];
-  const out = [{ ...list[0] }];
+  const out = [cloneSeg(list[0])];
   for (let i = 1; i < list.length; i++) {
     const prev = out[out.length - 1];
-    const cur = list[i];
-    if (prev.preset === cur.preset && Math.abs(prev.end - cur.start) <= eps) prev.end = cur.end;
-    else out.push({ ...cur });
+    const cur = cloneSeg(list[i]);
+    if (sameView(prev, cur) && Math.abs(prev.end - cur.start) <= eps) prev.end = cur.end;
+    else out.push(cur);
   }
   return out;
 }
@@ -123,10 +148,10 @@ function normalizeSegments(list, durationSec, defaultPreset = DEFAULT_PRESET) {
   const dur = Math.max(0, durationSec);
   if (!dur) return [];
   let sorted = (list || [])
-    .map((s) => ({
+    .map((s) => cloneSeg({
+      ...s,
       start: Math.max(0, s.start),
       end: Math.min(dur, s.end == null ? dur : s.end),
-      preset: String(s.preset || defaultPreset).toLowerCase(),
     }))
     .filter((s) => s.end - s.start > 0.02)
     .sort((a, b) => a.start - b.start);
@@ -136,30 +161,37 @@ function normalizeSegments(list, durationSec, defaultPreset = DEFAULT_PRESET) {
   for (const s of sorted) {
     if (s.start > cursor + 0.02) filled.push({ start: cursor, end: s.start, preset: defaultPreset });
     const start = Math.max(s.start, cursor);
-    if (s.end > start + 0.02) filled.push({ start, end: s.end, preset: s.preset });
+    if (s.end > start + 0.02) filled.push(cloneSeg({ ...s, start, end: s.end }));
     cursor = Math.max(cursor, s.end);
   }
   if (cursor < dur - 0.02) filled.push({ start: cursor, end: dur, preset: defaultPreset });
   return mergeAdjacent(filled);
 }
 
-function switchAt(list, t, preset, durationSec) {
+function asPatch(presetOrView) {
+  if (presetOrView && typeof presetOrView === 'object') {
+    return cloneSeg({ start: 0, end: 1, preset: 'custom', ...presetOrView, preset: 'custom' });
+  }
+  return { preset: String(presetOrView || DEFAULT_PRESET).toLowerCase() };
+}
+
+function switchAt(list, t, presetOrView, durationSec) {
   let segs = normalizeSegments(list, durationSec);
   t = clamp(Number(t) || 0, 0, durationSec);
   const eps = 0.05;
-  const name = String(preset).toLowerCase();
+  const patch = asPatch(presetOrView);
   const out = [];
   for (const s of segs) {
     if (s.end <= t + eps) { out.push(s); continue; }
     if (s.start >= t - eps) { out.push(s); continue; }
-    if (t - s.start > eps) out.push({ start: s.start, end: t, preset: s.preset });
-    if (s.end - t > eps) out.push({ start: t, end: s.end, preset: name });
+    if (t - s.start > eps) out.push(cloneSeg({ ...s, end: t }));
+    if (s.end - t > eps) out.push(cloneSeg({ ...patch, start: t, end: s.end }));
   }
   return mergeAdjacent(out);
 }
 
-function setRange(list, t0, t1, preset, durationSec) {
-  const name = String(preset).toLowerCase();
+function setRange(list, t0, t1, presetOrView, durationSec) {
+  const patch = asPatch(presetOrView);
   let a = clamp(Number(t0) || 0, 0, durationSec);
   let b = clamp(Number(t1) || 0, 0, durationSec);
   if (b <= a + 0.05) return normalizeSegments(list, durationSec);
@@ -167,11 +199,11 @@ function setRange(list, t0, t1, preset, durationSec) {
   const out = [];
   for (const s of segs) {
     if (s.end <= a || s.start >= b) { out.push(s); continue; }
-    if (s.start < a) out.push({ start: s.start, end: a, preset: s.preset });
+    if (s.start < a) out.push(cloneSeg({ ...s, end: a }));
     const mid0 = Math.max(s.start, a);
     const mid1 = Math.min(s.end, b);
-    if (mid1 > mid0) out.push({ start: mid0, end: mid1, preset: name });
-    if (s.end > b) out.push({ start: b, end: s.end, preset: s.preset });
+    if (mid1 > mid0) out.push(cloneSeg({ ...patch, start: mid0, end: mid1 }));
+    if (s.end > b) out.push(cloneSeg({ ...s, start: b }));
   }
   return mergeAdjacent(out);
 }
@@ -186,27 +218,61 @@ function removeCutNear(list, t, durationSec, tol = 0.75) {
     if (d < bestDist) { bestDist = d; best = i; }
   }
   if (best < 1 || bestDist > tol) return segs;
-  segs[best - 1] = { start: segs[best - 1].start, end: segs[best].end, preset: segs[best - 1].preset };
+  segs[best - 1] = cloneSeg({ ...segs[best - 1], end: segs[best].end });
   segs.splice(best, 1);
   return mergeAdjacent(segs);
 }
 
-function presetAt(list, t) {
+function segmentAt(list, t) {
   for (const s of list) {
-    if (t >= s.start - 1e-6 && t < s.end - 1e-6) return s.preset;
+    if (t >= s.start - 1e-6 && t < s.end - 1e-6) return s;
   }
-  if (list.length && Math.abs(t - list[list.length - 1].end) < 1e-3) return list[list.length - 1].preset;
-  return DEFAULT_PRESET;
+  if (list.length && Math.abs(t - list[list.length - 1].end) < 1e-3) return list[list.length - 1];
+  return { start: 0, end: 0, preset: DEFAULT_PRESET };
+}
+
+function presetAt(list, t) {
+  return segmentAt(list, t).preset;
+}
+
+function formatViewToken(s) {
+  if (s.preset === 'custom') {
+    return `custom@yaw:${Math.round(s.yaw)},pitch:${Math.round(s.pitch)},fov:${Math.round(s.h_fov)}`;
+  }
+  return s.preset;
 }
 
 function serializeTimeline(list) {
-  return list.map((s) => `${Number(s.start.toFixed(1))}-${Number(s.end.toFixed(1))}=${s.preset}`).join(',');
+  return list.map((s) => `${Number(s.start.toFixed(1))}-${Number(s.end.toFixed(1))}=${formatViewToken(s)}`).join(',');
+}
+
+function parseViewToken(token) {
+  const raw = String(token).trim();
+  const lower = raw.toLowerCase();
+  if (lower === 'custom' || lower.startsWith('custom@')) {
+    const body = lower.startsWith('custom@') ? raw.slice(raw.indexOf('@') + 1) : '';
+    const view = { preset: 'custom', yaw: 0, pitch: 0, h_fov: 90 };
+    for (const part of body.split(',')) {
+      const p = part.trim();
+      if (!p) continue;
+      const eq = p.indexOf(':');
+      if (eq < 0) continue;
+      const key = p.slice(0, eq).trim().toLowerCase();
+      const val = parseFloat(p.slice(eq + 1));
+      if (!Number.isFinite(val)) continue;
+      if (key === 'yaw') view.yaw = val;
+      else if (key === 'pitch') view.pitch = val;
+      else if (key === 'fov' || key === 'h_fov') view.h_fov = val;
+    }
+    return view;
+  }
+  return { preset: lower };
 }
 
 function parseTimelineLoose(spec) {
   if (!spec || !String(spec).trim()) return [];
   return String(spec).split(/[,\n]+/).map((s) => s.trim()).filter(Boolean).map((chunk) => {
-    const m = chunk.match(/^(.+?)-(.+?)=([a-zA-Z_][\w-]*)$/);
+    const m = chunk.match(/^(.+?)-(.+?)=(.+)$/);
     if (!m) throw new Error(`Bad segment: ${chunk}`);
     const parseTs = (tok) => {
       const t = tok.trim().toLowerCase();
@@ -217,7 +283,11 @@ function parseTimelineLoose(spec) {
       if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
       throw new Error(`Bad time: ${tok}`);
     };
-    return { start: parseTs(m[1]), end: parseTs(m[2]), preset: m[3].toLowerCase() };
+    return {
+      start: parseTs(m[1]),
+      end: parseTs(m[2]),
+      ...parseViewToken(m[3]),
+    };
   }).map((s) => ({
     ...s,
     end: s.end == null ? state.duration : s.end,
@@ -225,7 +295,14 @@ function parseTimelineLoose(spec) {
 }
 
 function colorFor(name) {
-  return PRESET_COLORS[name] || '#888';
+  return PRESET_COLORS[name] || PRESET_COLORS.custom;
+}
+
+function segLabel(s) {
+  if (s.preset === 'custom') {
+    return `custom (${Math.round(s.yaw)}°/${Math.round(s.pitch)}°/${Math.round(s.h_fov)}°)`;
+  }
+  return s.preset;
 }
 
 // —— Three.js main view ——
@@ -349,19 +426,35 @@ function tick() {
 function syncViewToPlayhead({ force = false } = {}) {
   if (!state.duration && !video.duration) return;
   const t = video.currentTime || 0;
-  const name = presetAt(segments, t);
+  const seg = segmentAt(segments, t);
+  const name = seg.preset;
+  const key = name === 'custom'
+    ? `custom:${Math.round(seg.yaw)}:${Math.round(seg.pitch)}:${Math.round(seg.h_fov)}`
+    : name;
   const timeMoved = Math.abs(t - state.followT) > 0.03;
-  const segChanged = name !== state.followPreset;
+  const segChanged = key !== state.followPreset;
   if (!force && !timeMoved && !segChanged) {
-    if (el.activeSeg) el.activeSeg.textContent = `jetzt: ${name}`;
+    if (el.activeSeg) el.activeSeg.textContent = `jetzt: ${segLabel(seg)}`;
     return;
   }
   state.followT = t;
-  state.followPreset = name;
-  if (el.activeSeg) el.activeSeg.textContent = `jetzt: ${name}`;
-  if (PRESETS[name] && (force || state.preset !== name)) {
-    setPreset(name);
+  state.followPreset = key;
+  if (el.activeSeg) el.activeSeg.textContent = `jetzt: ${segLabel(seg)}`;
+  applySegmentLook(seg);
+}
+
+/** Apply named preset or custom segment angles to the main view. */
+function applySegmentLook(seg) {
+  if (!seg) return;
+  if (seg.preset === 'custom') {
+    state.preset = 'custom';
+    state.yaw = Number(seg.yaw) || 0;
+    state.pitch = Number(seg.pitch) || 0;
+    state.fov = Number(seg.h_fov) || 90;
+    applyLook();
+    return;
   }
+  if (PRESETS[seg.preset]) setPreset(seg.preset);
 }
 
 function setPreset(name) {
@@ -379,21 +472,22 @@ function highlightPreset() {
   for (const btn of el.presets.querySelectorAll('button')) {
     btn.classList.toggle('active', btn.dataset.preset === state.preset);
   }
+  if (el.cutCustom) el.cutCustom.classList.toggle('active', state.preset === 'custom');
 }
 
 function nearestPresetName() {
-  let best = state.preset;
+  let best = null;
   let bestDist = Infinity;
   for (const [name, p] of Object.entries(PRESETS)) {
     const d = Math.abs(p.yaw - state.yaw) + Math.abs(p.pitch - state.pitch) * 0.5;
     if (d < bestDist) { bestDist = d; best = name; }
   }
-  return bestDist < 15 ? best : state.preset;
+  return bestDist < 15 ? best : 'custom';
 }
 
 function syncFromSegments({ markDirty = true } = {}) {
   segments = normalizeSegments(segments, state.duration || video.duration || 0);
-  el.timeline.value = segments.map((s) => `${s.start.toFixed(1)}-${s.end.toFixed(1)}=${s.preset}`).join(',\n');
+  el.timeline.value = segments.map((s) => `${s.start.toFixed(1)}-${s.end.toFixed(1)}=${formatViewToken(s)}`).join(',\n');
   renderSegList();
   drawScrubber();
   updateCmd();
@@ -482,7 +576,7 @@ function renderSegList() {
     row.className = 'seg-item';
     row.innerHTML = `
       <div class="swatch" style="background:${colorFor(s.preset)}"></div>
-      <div class="meta"><div class="name">${s.preset}</div>
+      <div class="meta"><div class="name">${segLabel(s)}</div>
       <div>${fmtTime(s.start)} – ${fmtTime(s.end)}</div></div>
       <button type="button" data-act="jump">Gehe hin</button>`;
     row.querySelector('[data-act="jump"]').addEventListener('click', (e) => {
@@ -638,13 +732,33 @@ function acceptSuggestion(s) {
   el.status.textContent = `Übernommen: ${fmtTime(s.start)}–${fmtTime(s.end)} = ${s.preset}`;
 }
 
-function doCut(presetName) {
-  const name = presetName || state.preset || nearestPresetName();
+function doCut(presetOrView) {
   const t = video.currentTime || 0;
-  segments = switchAt(segments, t, name, state.duration);
-  setPreset(name);
+  let patch = presetOrView;
+  let label;
+  if (patch && typeof patch === 'object') {
+    patch = {
+      yaw: Math.round(patch.yaw),
+      pitch: Math.round(patch.pitch),
+      h_fov: Math.round(patch.h_fov ?? patch.fov ?? state.fov),
+    };
+    label = `custom (${patch.yaw}°/${patch.pitch}°/${patch.h_fov}°)`;
+  } else {
+    const name = patch || state.preset || nearestPresetName();
+    if (name === 'custom') {
+      doCut({ yaw: state.yaw, pitch: state.pitch, h_fov: state.fov });
+      return;
+    }
+    patch = name;
+    label = name;
+  }
+  segments = switchAt(segments, t, patch, state.duration);
   syncFromSegments();
-  el.status.textContent = `Cut @ ${fmtTime(t)} → ${name}`;
+  el.status.textContent = `Cut @ ${fmtTime(t)} → ${label}`;
+}
+
+function doCutCustom() {
+  doCut({ yaw: state.yaw, pitch: state.pitch, h_fov: state.fov });
 }
 
 function rebuildPresetUi() {
@@ -722,6 +836,7 @@ el.rates.addEventListener('click', (e) => {
 });
 
 el.cutHere.addEventListener('click', () => doCut(state.preset));
+el.cutCustom.addEventListener('click', () => doCutCustom());
 el.cutForward.addEventListener('click', () => doCut('forward'));
 el.cutSelfie.addEventListener('click', () => doCut('selfie'));
 el.removeCut.addEventListener('click', () => {
@@ -909,7 +1024,12 @@ window.addEventListener('keydown', (e) => {
     else video.pause();
   } else if (e.key === 'c' || e.key === 'C') {
     e.preventDefault();
-    doCut(state.preset);
+    doCut(state.preset === 'custom'
+      ? { yaw: state.yaw, pitch: state.pitch, h_fov: state.fov }
+      : state.preset);
+  } else if (e.key === 'x' || e.key === 'X') {
+    e.preventDefault();
+    doCutCustom();
   } else if (e.key === 'f' || e.key === 'F') {
     doCut('forward');
   } else if (e.key === 's' || e.key === 'S') {

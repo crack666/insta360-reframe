@@ -29,7 +29,7 @@ OPTIONS:
   --preset, -p      Single preset for whole clip (default: forward)
                     ${Object.keys(loadPresets()).join(' | ')}
   --timeline, -t    Segment list, e.g.
-                    "0-90=forward,90-120=selfie,120-150=left,150-end=forward"
+                    "0-90=forward,90-120=selfie,120-150=custom@yaw:70,pitch:20,fov:90"
   --timeline-file   File with one segment per line
   --width           Flat width (default 1280)
   --height          Flat height (default 720)
@@ -106,24 +106,29 @@ async function main() {
   }
 
   const duration = await probeDuration(opts.input);
+  let segments = null;
   let timelineSpec = opts.timeline;
+
+  function loadSegmentsFromJson(doc) {
+    if (Array.isArray(doc.segments) && doc.segments.length) {
+      return resolveTimeline(doc.segments, duration);
+    }
+    if (doc.timeline) return resolveTimeline(parseTimeline(doc.timeline), duration);
+    return null;
+  }
+
   if (opts.timelineFile) {
     const raw = fs.readFileSync(opts.timelineFile, 'utf8');
     if (opts.timelineFile.endsWith('.json')) {
-      const doc = JSON.parse(raw);
-      timelineSpec = doc.timeline || (doc.segments
-        ? doc.segments.map((s) => `${s.start}-${s.end == null ? 'end' : s.end}=${s.preset}`).join(',')
-        : '');
+      segments = loadSegmentsFromJson(JSON.parse(raw));
     } else {
       timelineSpec = raw;
     }
-  } else {
-    // Auto-pick companion timeline next to input if present
+  } else if (!timelineSpec) {
     const jsonSide = `${opts.input}.timeline.json`;
     const txtSide = `${opts.input}.timeline.txt`;
     if (fs.existsSync(jsonSide)) {
-      const doc = JSON.parse(fs.readFileSync(jsonSide, 'utf8'));
-      timelineSpec = doc.timeline || '';
+      segments = loadSegmentsFromJson(JSON.parse(fs.readFileSync(jsonSide, 'utf8')));
       console.log(`timeline: ${jsonSide}`);
     } else if (fs.existsSync(txtSide)) {
       timelineSpec = fs.readFileSync(txtSide, 'utf8');
@@ -131,11 +136,26 @@ async function main() {
     }
   }
 
-  let segments;
-  if (timelineSpec) {
-    segments = resolveTimeline(parseTimeline(timelineSpec), duration);
-  } else {
-    segments = [{ start: 0, end: duration, preset: opts.preset }];
+  if (!segments) {
+    if (timelineSpec) {
+      segments = resolveTimeline(parseTimeline(timelineSpec), duration);
+    } else {
+      segments = [{ start: 0, end: duration, preset: opts.preset }];
+    }
+  }
+
+  function viewForSegment(seg) {
+    if (seg.preset === 'custom') {
+      return {
+        name: 'custom',
+        yaw: Number(seg.yaw) || 0,
+        pitch: Number(seg.pitch) || 0,
+        roll: Number(seg.roll) || 0,
+        h_fov: Number(seg.h_fov ?? seg.fov) || 90,
+        v_fov: Number(seg.v_fov) || 70,
+      };
+    }
+    return resolvePreset(seg.preset);
   }
 
   const encoder = await pickVideoEncoder();
@@ -151,15 +171,16 @@ async function main() {
   const partFiles = [];
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
-    let view = resolvePreset(seg.preset);
+    let view = viewForSegment(seg);
     if (segments.length === 1) {
       if (opts.yaw != null) view = { ...view, yaw: opts.yaw };
       if (opts.pitch != null) view = { ...view, pitch: opts.pitch };
       if (opts.fov != null) view = { ...view, h_fov: opts.fov };
     }
-    const part = path.join(workDir, `seg_${String(i).padStart(3, '0')}_${seg.preset}.mp4`);
+    const tag = seg.preset === 'custom' ? 'custom' : seg.preset;
+    const part = path.join(workDir, `seg_${String(i).padStart(3, '0')}_${tag}.mp4`);
     console.log(
-      `  [${i + 1}/${segments.length}] ${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s  ${seg.preset}` +
+      `  [${i + 1}/${segments.length}] ${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s  ${tag}` +
       `  (yaw=${view.yaw} pitch=${view.pitch} fov=${view.h_fov})`,
     );
     await encodeSegment({

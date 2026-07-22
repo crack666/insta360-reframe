@@ -44,8 +44,10 @@ select, textarea { width: 100%; background: #0e1118; color: var(--text); border:
 textarea { font: 12px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 
 .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-.cut-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 8px 0; }
+.cut-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0; }
 .cut-row .primary { grid-column: 1 / -1; }
+.cut-row .custom-cut { grid-column: 1 / -1; border-color: #6a7180; background: #2a2e36; }
+.cut-row .custom-cut.active { border-color: #9aa0a8; background: #3a404c; }
 
 button { background: var(--btn); color: var(--text); border: 1px solid #3a4358; border-radius: 6px;
   padding: 7px 10px; cursor: pointer; font: inherit; }

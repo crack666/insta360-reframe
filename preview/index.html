@@ -16,10 +16,12 @@
 
       <section>
         <h2>1 · Blickrichtung</h2>
-        <p class="hint">Klick = ansehen. <kbd>C</kbd> schneidet ab Playhead auf aktives Preset.</p>
+        <p class="hint">Klick = Preset ansehen. Ziehen im Bild = freier Blick.
+          <kbd>C</kbd> = Cut Preset · <kbd>X</kbd> = Cut custom (aktueller Blick, grau).</p>
         <div class="row presets" id="presets"></div>
         <div class="cut-row">
           <button type="button" id="cutHere" class="primary">Cut hier → aktives Preset</button>
+          <button type="button" id="cutCustom" class="custom-cut">Cut → custom Blick</button>
           <button type="button" id="cutForward">→ forward</button>
           <button type="button" id="cutSelfie">→ selfie</button>
         </div>
@@ -116,7 +118,8 @@
       </section>
 
       <p class="hint shortcuts">
-        <kbd>Space</kbd> Play · <kbd>C</kbd> Cut · <kbd>F</kbd>/<kbd>S</kbd> forward/selfie ·
+        <kbd>Space</kbd> Play · <kbd>C</kbd> Cut Preset · <kbd>X</kbd> Cut custom ·
+        <kbd>F</kbd>/<kbd>S</kbd> forward/selfie ·
         <kbd>1</kbd><kbd>2</kbd><kbd>4</kbd> Tempo · <kbd>[</kbd><kbd>]</kbd> ±5s · <kbd>Del</kbd> Cut weg
       </p>
       <p class="hint" id="status">Loading…</p>
