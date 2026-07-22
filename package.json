@@ -1,0 +1,13 @@
+{
+  "name": "insta360-reframe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Equirect → flat reframe with direction presets (chest-mount jogging / obstacle course)",
+  "bin": {
+    "insta360-reframe": "./src/cli.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
