@@ -44,24 +44,45 @@
       <section>
         <h2>2 · Vorschläge (semi-auto)</h2>
         <p class="hint">
-          „Ruhe“ = wenig Bildbewegung (nicht zwingend Stillstand). Schwache Täler sind oft Noise —
-          standardmäßig aus.
+          Wann ein Vorschlag entsteht (Schieberegler = Trigger):
+          <strong>Ruhe</strong> = Bildbewegung länger als „Min. Ruhe-Dauer“ unter dem Ruhe-Schwellwert
+          (Strenge ↑ = strenger).
+          <strong>Selfie-Check</strong> = alle paar Sekunden wird dein gespeichertes Selfie-Preset als Flat-Frame gerendert;
+          wenn hautfarbene Pixel ≥ „Min. Hautanteil“ → Vorschlag (kein echter Gesichtserkenner).
+          <strong>Spike</strong> = plötzliche Bewegung (nur Marker).
+          Badge „X% sicher“ = Confidence, nicht Hautanteil.
         </p>
         <details class="analyze-opts" open>
           <summary>Analyse-Parameter</summary>
           <div class="opt-grid">
-            <label class="check"><input type="checkbox" id="optCalm" checked /> Ruhe-Abschnitte</label>
-            <label class="check"><input type="checkbox" id="optValleys" /> Bewegungs-Täler <span class="muted">(viele, schwach)</span></label>
-            <label class="check"><input type="checkbox" id="optSkin" checked /> Selfie-Sektor (Haut)</label>
-            <label class="check"><input type="checkbox" id="optSpikes" checked /> Bewegungs-Spikes</label>
+            <label class="check" title="Trigger: Frame-Differenz über mehrere Sekunden unter dem Ruhe-Schwellwert; Dauer ≥ Min. Ruhe-Dauer.">
+              <input type="checkbox" id="optCalm" checked /> Ruhe-Abschnitte
+            </label>
+            <label class="check" title="Trigger: kurzes lokales Minimum der Bewegung — oft Noise, standardmäßig aus.">
+              <input type="checkbox" id="optValleys" /> Bewegungs-Täler <span class="muted">(viele, schwach)</span>
+            </label>
+            <label class="check" title="Trigger: Selfie-Preset als Flat-Frame; Anteil hautfarbener Pixel ≥ Min. Hautanteil. Kein Gesichtserkenner.">
+              <input type="checkbox" id="optSkin" checked /> Selfie-Check (Hautfarbe im Selfie-Preset)
+            </label>
+            <label class="check" title="Trigger: plötzlicher Anstieg der Bildbewegung — nur Review-Marker.">
+              <input type="checkbox" id="optSpikes" checked /> Bewegungs-Spikes
+            </label>
           </div>
-          <label>Ruhe-Strenge <span id="optStrictVal">45</span> <span class="muted">(höher = weniger Selfie-Vorschläge)</span></label>
+          <label title="Höher = nur ruhigere Stellen zählen → weniger Ruhe-Treffer.">
+            Ruhe-Strenge <span id="optStrictVal">45</span> <span class="muted">(↑ = weniger Ruhe-Treffer)</span>
+          </label>
           <input type="range" id="optStrict" min="0" max="100" step="5" value="45" />
-          <label>Min. Ruhe-Dauer <span id="optMinCalmVal">2</span>s</label>
+          <label title="Ruhe-Fenster muss mindestens so lange dauern, sonst kein Vorschlag.">
+            Min. Ruhe-Dauer <span id="optMinCalmVal">2</span>s <span class="muted">(Trigger-Länge)</span>
+          </label>
           <input type="range" id="optMinCalm" min="1" max="6" step="0.5" value="2" />
-          <label>Min. Hautanteil Selfie <span id="optMinSkinVal">10</span>%</label>
+          <label title="Selfie-Check springt an, wenn ≥ dieser Anteil der Pixel im Selfie-Blick hautfarben wirkt (grobe RGB-Heuristik).">
+            Min. Hautanteil (Trigger) <span id="optMinSkinVal">10</span>%
+          </label>
           <input type="range" id="optMinSkin" min="5" max="40" step="1" value="10" />
-          <label>Min. Anzeige-Confidence <span id="optMinConfVal">45</span>%</label>
+          <label title="Vorschläge unter dieser Confidence werden nicht angezeigt.">
+            Min. Anzeige-Confidence <span id="optMinConfVal">45</span>%
+          </label>
           <input type="range" id="optMinConf" min="20" max="80" step="5" value="45" />
         </details>
         <div class="row">
@@ -76,16 +97,19 @@
         <h2>3 · Timeline</h2>
         <div id="segList" class="seg-list"></div>
         <div class="row">
-          <button type="button" id="resetTimeline">Reset → nur forward</button>
-          <button type="button" id="removeCut">Cut am Playhead löschen</button>
+          <button type="button" id="saveTimeline" class="primary">Timeline speichern</button>
+          <button type="button" id="reloadTimeline">Neu laden</button>
+          <button type="button" id="resetTimeline">Reset → forward</button>
+          <button type="button" id="removeCut">Cut löschen</button>
         </div>
+        <p class="hint" id="timelinePath">Noch nicht gespeichert</p>
+        <label class="check"><input type="checkbox" id="autoSaveTimeline" checked /> Auto-Save nach Cuts</label>
         <details>
           <summary>Rohtext / CLI</summary>
           <textarea id="timeline" rows="4" placeholder="0-12=forward,12-22=selfie,…"></textarea>
           <div class="row">
             <button type="button" id="copyTimeline">Timeline kopieren</button>
             <button type="button" id="copyCmd">CLI kopieren</button>
-            <button type="button" id="saveTimeline">Timeline speichern</button>
           </div>
           <pre id="cmd" class="cmd"></pre>
         </details>

@@ -176,15 +176,19 @@ const server = http.createServer(async (req, res) => {
       if (!segments.length && body.timeline) {
         segments = parseTimeline(body.timeline);
       }
+      const timelineStr = body.timeline || serializeTimeline(segments);
       const out = {
         version: 1,
         video: videoPath,
-        timeline: body.timeline || serializeTimeline(segments),
+        timeline: timelineStr,
         segments,
         updated: new Date().toISOString(),
       };
       fs.writeFileSync(p, `${JSON.stringify(out, null, 2)}\n`, 'utf8');
-      json(res, 200, { ok: true, path: p, ...out });
+      // CLI-friendly companion (same folder)
+      const txtPath = `${videoPath}.timeline.txt`;
+      fs.writeFileSync(txtPath, `${timelineStr.replace(/,/g, '\n')}\n`, 'utf8');
+      json(res, 200, { ok: true, path: p, txtPath, ...out });
       return;
     }
 

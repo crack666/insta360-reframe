@@ -108,7 +108,27 @@ async function main() {
   const duration = await probeDuration(opts.input);
   let timelineSpec = opts.timeline;
   if (opts.timelineFile) {
-    timelineSpec = fs.readFileSync(opts.timelineFile, 'utf8');
+    const raw = fs.readFileSync(opts.timelineFile, 'utf8');
+    if (opts.timelineFile.endsWith('.json')) {
+      const doc = JSON.parse(raw);
+      timelineSpec = doc.timeline || (doc.segments
+        ? doc.segments.map((s) => `${s.start}-${s.end == null ? 'end' : s.end}=${s.preset}`).join(',')
+        : '');
+    } else {
+      timelineSpec = raw;
+    }
+  } else {
+    // Auto-pick companion timeline next to input if present
+    const jsonSide = `${opts.input}.timeline.json`;
+    const txtSide = `${opts.input}.timeline.txt`;
+    if (fs.existsSync(jsonSide)) {
+      const doc = JSON.parse(fs.readFileSync(jsonSide, 'utf8'));
+      timelineSpec = doc.timeline || '';
+      console.log(`timeline: ${jsonSide}`);
+    } else if (fs.existsSync(txtSide)) {
+      timelineSpec = fs.readFileSync(txtSide, 'utf8');
+      console.log(`timeline: ${txtSide}`);
+    }
   }
 
   let segments;

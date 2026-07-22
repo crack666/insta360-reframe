@@ -44,6 +44,9 @@ const el = {
   copyTimeline: document.getElementById('copyTimeline'),
   copyCmd: document.getElementById('copyCmd'),
   saveTimeline: document.getElementById('saveTimeline'),
+  reloadTimeline: document.getElementById('reloadTimeline'),
+  timelinePath: document.getElementById('timelinePath'),
+  autoSaveTimeline: document.getElementById('autoSaveTimeline'),
   resetTimeline: document.getElementById('resetTimeline'),
   removeCut: document.getElementById('removeCut'),
   cutHere: document.getElementById('cutHere'),
@@ -75,12 +78,17 @@ const el = {
 let PRESETS = {};
 /** @type {{start:number,end:number,preset:string}[]} */
 let segments = [];
+/** @type {{start:number,end:number,preset:string}[]|null} */
+let pendingTimeline = null;
 /** @type {any[]} */
 let suggestions = [];
 /** @type {{start:number,end:number,preset:string}[]|null} */
 let proposedSegments = null;
 /** @type {Set<string>} */
 const dismissed = new Set();
+let timelineDirty = false;
+let timelineSavePath = '';
+let autoSaveTimer = null;
 
 const state = {
   yaw: 0,
@@ -92,6 +100,10 @@ const state = {
   lastY: 0,
   duration: 0,
   rate: 1,
+  /** last playhead time we synced view from */
+  followT: -1,
+  /** timeline preset last applied to the view */
+  followPreset: null,
 };
 
 // —— Timeline helpers (mirror server) ——
@@ -320,15 +332,36 @@ function tick() {
   if (video.duration && !el.seek.matches(':active')) {
     el.seek.value = String(Math.round((video.currentTime / video.duration) * 1000));
     el.timeVal.textContent = `${fmtTime(video.currentTime)} / ${fmtTime(video.duration)}`;
-    const cur = presetAt(segments, video.currentTime);
-    el.activeSeg.textContent = `jetzt: ${cur}`;
     el.play.textContent = video.paused ? 'Play' : 'Pause';
+    syncViewToPlayhead();
   }
   renderer.render(scene, camera);
   for (const pv of peekViews) {
     pv.renderer.render(scene, pv.camera);
   }
   requestAnimationFrame(tick);
+}
+
+/**
+ * Keep Blickrichtung in sync with the timeline segment under the playhead.
+ * Runs when time moves (play/scrub/jump) or segment at playhead changes.
+ */
+function syncViewToPlayhead({ force = false } = {}) {
+  if (!state.duration && !video.duration) return;
+  const t = video.currentTime || 0;
+  const name = presetAt(segments, t);
+  const timeMoved = Math.abs(t - state.followT) > 0.03;
+  const segChanged = name !== state.followPreset;
+  if (!force && !timeMoved && !segChanged) {
+    if (el.activeSeg) el.activeSeg.textContent = `jetzt: ${name}`;
+    return;
+  }
+  state.followT = t;
+  state.followPreset = name;
+  if (el.activeSeg) el.activeSeg.textContent = `jetzt: ${name}`;
+  if (PRESETS[name] && (force || state.preset !== name)) {
+    setPreset(name);
+  }
 }
 
 function setPreset(name) {
@@ -358,12 +391,82 @@ function nearestPresetName() {
   return bestDist < 15 ? best : state.preset;
 }
 
-function syncFromSegments() {
+function syncFromSegments({ markDirty = true } = {}) {
   segments = normalizeSegments(segments, state.duration || video.duration || 0);
   el.timeline.value = segments.map((s) => `${s.start.toFixed(1)}-${s.end.toFixed(1)}=${s.preset}`).join(',\n');
   renderSegList();
   drawScrubber();
   updateCmd();
+  syncViewToPlayhead({ force: true });
+  if (markDirty) {
+    timelineDirty = true;
+    updateTimelinePathUi();
+    scheduleAutoSave();
+  }
+}
+
+function updateTimelinePathUi() {
+  if (!el.timelinePath) return;
+  const dirty = timelineDirty ? ' · ungespeichert' : '';
+  if (timelineSavePath) {
+    el.timelinePath.textContent = `Gespeichert: ${timelineSavePath}${dirty}`;
+  } else {
+    el.timelinePath.textContent = timelineDirty
+      ? 'Noch nicht gespeichert — „Timeline speichern“ oder Auto-Save'
+      : 'Noch keine Timeline-Datei';
+  }
+}
+
+function scheduleAutoSave() {
+  if (!el.autoSaveTimeline?.checked) return;
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    saveTimelineToServer({ quiet: true }).catch(() => {});
+  }, 600);
+}
+
+async function saveTimelineToServer({ quiet = false } = {}) {
+  const r = await fetch('/api/timeline', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ segments, timeline: serializeTimeline(segments) }),
+  });
+  const doc = await r.json();
+  if (!r.ok || !doc.ok) {
+    if (!quiet) el.status.textContent = `Speichern fehlgeschlagen: ${doc.error || r.status}`;
+    throw new Error(doc.error || String(r.status));
+  }
+  timelineDirty = false;
+  timelineSavePath = doc.path || timelineSavePath;
+  updateTimelinePathUi();
+  if (!quiet) {
+    el.status.textContent = `Timeline gespeichert (${segments.length} Segmente) → ${doc.path}`;
+  }
+  return doc;
+}
+
+async function loadTimelineFromServer({ announce = true } = {}) {
+  const r = await fetch('/api/timeline', { cache: 'no-store' });
+  if (!r.ok) return false;
+  const doc = await r.json();
+  if (doc.path) timelineSavePath = doc.path;
+  if (!doc.segments?.length) {
+    updateTimelinePathUi();
+    return false;
+  }
+  const dur = state.duration || video.duration || 0;
+  if (dur > 0) {
+    segments = normalizeSegments(doc.segments, dur);
+    syncFromSegments({ markDirty: false });
+    timelineDirty = false;
+    updateTimelinePathUi();
+    if (announce) el.status.textContent = `Timeline geladen (${segments.length} Segmente)`;
+  } else {
+    pendingTimeline = doc.segments;
+    updateTimelinePathUi();
+    if (announce) el.status.textContent = 'Timeline gefunden — warte auf Video-Metadaten…';
+  }
+  return true;
 }
 
 function updateCmd() {
@@ -385,11 +488,11 @@ function renderSegList() {
     row.querySelector('[data-act="jump"]').addEventListener('click', (e) => {
       e.stopPropagation();
       video.currentTime = s.start + 0.05;
-      setPreset(s.preset);
+      syncViewToPlayhead({ force: true });
     });
     row.addEventListener('click', () => {
       video.currentTime = s.start + 0.05;
-      setPreset(s.preset);
+      syncViewToPlayhead({ force: true });
     });
     el.segList.appendChild(row);
   }
@@ -447,6 +550,15 @@ function suggestBadge(s) {
   return src;
 }
 
+const SOURCE_LABEL = {
+  haut: 'Selfie-Check',
+  ruhe: 'Ruhe',
+  tal: 'Bewegungs-Tal',
+  spike: 'Spike',
+  pause: 'Ruhe',
+  selfie: 'Selfie',
+};
+
 function renderSuggestions() {
   el.suggestList.innerHTML = '';
   const visible = suggestions.filter((s) => !dismissed.has(s.id));
@@ -457,14 +569,24 @@ function renderSuggestions() {
   for (const s of visible) {
     const item = document.createElement('div');
     item.className = 'suggest-item';
-    const badge = suggestBadge(s);
+    const src = suggestBadge(s);
+    const label = SOURCE_LABEL[src] || src;
+    const confPct = Math.round((s.confidence || 0) * 100);
     const range = isSelfieSuggestion(s)
       ? `${fmtTime(s.start)} – ${fmtTime(s.end)} → ${s.preset}`
       : `@ ${fmtTime(s.at ?? s.start)}`;
+    const skinPct = Number.isFinite(s.skin) ? Math.round(s.skin * 100) : null;
+    const triggerHint = src === 'haut' && skinPct != null
+      ? `Trigger: Hautfarbe ${skinPct}% ≥ Min. Hautanteil (Slider). „${confPct}% sicher“ = Confidence.`
+      : src === 'ruhe'
+        ? `Trigger: ruhiger Abschnitt (wenig Frame-Differenz) ≥ Min. Ruhe-Dauer. „${confPct}% sicher“ = Confidence.`
+        : src === 'tal'
+          ? `Trigger: kurzes Bewegungs-Tal (oft Noise). „${confPct}% sicher“ = Confidence.`
+          : `Trigger: Bewegungs-Spike. „${confPct}% sicher“ = Confidence.`;
     item.innerHTML = `
       <div class="top">
         <strong>${range}</strong>
-        <span class="badge ${badge}">${badge} · ${Math.round((s.confidence || 0) * 100)}%</span>
+        <span class="badge ${src}" title="${triggerHint}">${label} · ${confPct}% sicher</span>
       </div>
       <div class="reason">${s.reason || ''}</div>
       <div class="actions"></div>`;
@@ -503,8 +625,7 @@ function renderSuggestions() {
 
 /** Snap look to the timeline preset at the current playhead. */
 function restoreTimelineView() {
-  const name = presetAt(segments, video.currentTime || 0);
-  if (PRESETS[name]) setPreset(name);
+  syncViewToPlayhead({ force: true });
 }
 
 function acceptSuggestion(s) {
@@ -562,19 +683,6 @@ async function loadPresetsFromServer() {
   }
 }
 
-async function loadTimelineFromServer() {
-  try {
-    const r = await fetch('/api/timeline', { cache: 'no-store' });
-    if (!r.ok) return;
-    const doc = await r.json();
-    if (doc.segments?.length) {
-      segments = doc.segments;
-      syncFromSegments();
-      el.status.textContent = `Timeline geladen (${segments.length} Segmente)`;
-    }
-  } catch { /* ignore */ }
-}
-
 // —— Events ——
 el.yaw.addEventListener('input', () => {
   state.yaw = Number(el.yaw.value);
@@ -594,6 +702,7 @@ el.fov.addEventListener('input', () => {
 el.seek.addEventListener('input', () => {
   if (!video.duration) return;
   video.currentTime = (Number(el.seek.value) / 1000) * video.duration;
+  syncViewToPlayhead({ force: true });
   drawScrubber();
 });
 
@@ -677,13 +786,19 @@ el.copyCmd.addEventListener('click', async () => {
   el.status.textContent = 'CLI kopiert';
 });
 el.saveTimeline.addEventListener('click', async () => {
-  const r = await fetch('/api/timeline', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ segments, timeline: serializeTimeline(segments) }),
-  });
-  const doc = await r.json();
-  el.status.textContent = doc.ok ? `Timeline gespeichert → ${doc.path}` : `Fehler: ${doc.error}`;
+  try {
+    await saveTimelineToServer({ quiet: false });
+  } catch (err) {
+    el.status.textContent = `Speichern fehlgeschlagen: ${err.message || err}`;
+  }
+});
+el.reloadTimeline.addEventListener('click', async () => {
+  try {
+    const ok = await loadTimelineFromServer({ announce: true });
+    if (!ok) el.status.textContent = 'Keine gespeicherte Timeline für dieses Video';
+  } catch (err) {
+    el.status.textContent = `Laden fehlgeschlagen: ${err.message || err}`;
+  }
 });
 
 function readAnalyzeOptions() {
@@ -807,11 +922,14 @@ window.addEventListener('keydown', (e) => {
     state.rate = 4; video.playbackRate = 4;
   } else if (e.key === '[') {
     video.currentTime = Math.max(0, (video.currentTime || 0) - 5);
+    syncViewToPlayhead({ force: true });
   } else if (e.key === ']') {
     video.currentTime = Math.min(state.duration, (video.currentTime || 0) + 5);
+    syncViewToPlayhead({ force: true });
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
     segments = removeCutNear(segments, video.currentTime || 0, state.duration);
     syncFromSegments();
+    syncViewToPlayhead({ force: true });
   }
   for (const b of el.rates.querySelectorAll('button')) {
     b.classList.toggle('active', Number(b.dataset.rate) === state.rate);
@@ -820,17 +938,30 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('resize', resize);
-video.addEventListener('timeupdate', drawScrubber);
+video.addEventListener('timeupdate', () => {
+  syncViewToPlayhead();
+  drawScrubber();
+});
 
 video.addEventListener('loadedmetadata', async () => {
   state.duration = video.duration || 0;
-  if (!segments.length) {
+  if (pendingTimeline?.length) {
+    segments = normalizeSegments(pendingTimeline, state.duration);
+    pendingTimeline = null;
+    syncFromSegments({ markDirty: false });
+    timelineDirty = false;
+    updateTimelinePathUi();
+    el.status.textContent = `Ready · Timeline geladen (${segments.length} Segmente) · ${fmtTime(state.duration)}`;
+  } else if (!segments.length) {
     segments = [{ start: 0, end: state.duration, preset: DEFAULT_PRESET }];
+    syncFromSegments({ markDirty: false });
+    el.status.textContent = `Ready · ${fmtTime(state.duration)} · Blick folgt Timeline · C = Cut · Auto-Save an`;
   } else {
     segments = normalizeSegments(segments, state.duration);
+    syncFromSegments({ markDirty: false });
+    el.status.textContent = `Ready · ${fmtTime(state.duration)} · ${segments.length} Segmente`;
   }
-  syncFromSegments();
-  el.status.textContent = `Ready · ${fmtTime(state.duration)} · C = Cut · Peek-Klick = Cut auf Preset`;
+  syncViewToPlayhead({ force: true });
   resize();
   video.play().catch(() => {});
 });
@@ -845,11 +976,15 @@ fetch('/api/info')
   .then((info) => {
     if (info.name) el.videoName.textContent = info.name;
     if (info.presetsPath) el.presetPath.textContent = `Datei: ${info.presetsPath}`;
+    if (info.timelinePath) {
+      timelineSavePath = info.timelinePath;
+      updateTimelinePathUi();
+    }
   })
   .catch(() => {});
 
 loadPresetsFromServer()
-  .then(() => loadTimelineFromServer())
+  .then(() => loadTimelineFromServer({ announce: false }))
   .then(() => {
     resize();
     applyLook();

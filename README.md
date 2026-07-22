@@ -14,7 +14,9 @@ npm run preview -- --video "D:/ai/ai-stack/data/insta360/work/011-reframe-smoke/
 1. **Presets kalibrieren** (einmal pro Mount) — Winkel speichern → `presets.json`
 2. **Cuts setzen** — Playhead + `C` / Buttons / Peek-Klick = ab hier dieses Preset
 3. **Optional analysieren** — Pausen → Selfie-Vorschläge, Spikes als Marker → übernehmen/verwerfen
-4. **Timeline speichern** → `*.timeline.json` neben dem Video · CLI kopieren · exportieren
+4. **Timeline speichern** (Button oben bei Timeline, Auto-Save nach Cuts)
+   → `<video>.timeline.json` + `.timeline.txt` neben dem Video · Reload lädt sie wieder
+5. Export: CLI liest die Companion-Datei automatisch, oder `-t` / `--timeline-file`
 
 ### Shortcuts
 
