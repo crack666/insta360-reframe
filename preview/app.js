@@ -237,7 +237,7 @@ function presetAt(list, t) {
 
 function formatViewToken(s) {
   if (s.preset === 'custom') {
-    return `custom@yaw:${Math.round(s.yaw)},pitch:${Math.round(s.pitch)},fov:${Math.round(s.h_fov)}`;
+    return `custom@${Math.round(s.yaw)}/${Math.round(s.pitch)}/${Math.round(s.h_fov)}`;
   }
   return s.preset;
 }
@@ -252,17 +252,24 @@ function parseViewToken(token) {
   if (lower === 'custom' || lower.startsWith('custom@')) {
     const body = lower.startsWith('custom@') ? raw.slice(raw.indexOf('@') + 1) : '';
     const view = { preset: 'custom', yaw: 0, pitch: 0, h_fov: 90 };
-    for (const part of body.split(',')) {
+    if (/^-?\d+(\.\d+)?\/-?\d+(\.\d+)?\/-?\d+(\.\d+)?$/.test(body.trim())) {
+      const [yaw, pitch, fov] = body.split('/').map(Number);
+      view.yaw = yaw;
+      view.pitch = pitch;
+      view.h_fov = fov;
+      return view;
+    }
+    for (const part of body.split(/[;,]/)) {
       const p = part.trim();
       if (!p) continue;
-      const eq = p.indexOf(':');
+      const eq = p.search(/[:=]/);
       if (eq < 0) continue;
       const key = p.slice(0, eq).trim().toLowerCase();
       const val = parseFloat(p.slice(eq + 1));
       if (!Number.isFinite(val)) continue;
-      if (key === 'yaw') view.yaw = val;
-      else if (key === 'pitch') view.pitch = val;
-      else if (key === 'fov' || key === 'h_fov') view.h_fov = val;
+      if (key === 'yaw' || key === 'y') view.yaw = val;
+      else if (key === 'pitch' || key === 'p') view.pitch = val;
+      else if (key === 'fov' || key === 'h_fov' || key === 'f') view.h_fov = val;
     }
     return view;
   }

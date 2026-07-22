@@ -29,7 +29,7 @@ OPTIONS:
   --preset, -p      Single preset for whole clip (default: forward)
                     ${Object.keys(loadPresets()).join(' | ')}
   --timeline, -t    Segment list, e.g.
-                    "0-90=forward,90-120=selfie,120-150=custom@yaw:70,pitch:20,fov:90"
+                    "0-90=forward,90-120=selfie,120-150=custom@70/20/90"
   --timeline-file   File with one segment per line
   --width           Flat width (default 1280)
   --height          Flat height (default 720)

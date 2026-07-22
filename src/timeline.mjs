@@ -6,7 +6,8 @@
  *   0-120=forward,120-150=selfie
  *
  * Custom look (inline angles, not a saved preset):
- *   40-48=custom@yaw:70,pitch:20,fov:90
+ *   40-48=custom@70/20/90          (yaw/pitch/fov)
+ *   40-48=custom@yaw=70;pitch=20;fov=90
  */
 
 export function parseTimestamp(token, { allowEnd = false } = {}) {
@@ -28,18 +29,26 @@ function parseViewToken(token) {
   if (lower === 'custom' || lower.startsWith('custom@')) {
     const body = lower.startsWith('custom@') ? raw.slice(raw.indexOf('@') + 1) : '';
     const view = { preset: 'custom', yaw: 0, pitch: 0, h_fov: 90, roll: 0 };
-    for (const part of body.split(',')) {
+    // Prefer compact form custom@70/20/90 (no commas — safe in CSV timelines)
+    if (/^-?\d+(\.\d+)?\/-?\d+(\.\d+)?\/-?\d+(\.\d+)?$/.test(body.trim())) {
+      const [yaw, pitch, fov] = body.split('/').map(Number);
+      view.yaw = yaw;
+      view.pitch = pitch;
+      view.h_fov = fov;
+      return view;
+    }
+    for (const part of body.split(/[;,]/)) {
       const p = part.trim();
       if (!p) continue;
-      const eq = p.indexOf(':');
+      const eq = p.search(/[:=]/);
       if (eq < 0) continue;
       const key = p.slice(0, eq).trim().toLowerCase();
       const val = parseFloat(p.slice(eq + 1));
       if (!Number.isFinite(val)) continue;
-      if (key === 'yaw') view.yaw = val;
-      else if (key === 'pitch') view.pitch = val;
-      else if (key === 'fov' || key === 'h_fov') view.h_fov = val;
-      else if (key === 'roll') view.roll = val;
+      if (key === 'yaw' || key === 'y') view.yaw = val;
+      else if (key === 'pitch' || key === 'p') view.pitch = val;
+      else if (key === 'fov' || key === 'h_fov' || key === 'f') view.h_fov = val;
+      else if (key === 'roll' || key === 'r') view.roll = val;
       else if (key === 'v_fov') view.v_fov = val;
     }
     return view;
@@ -87,7 +96,7 @@ export function parseTimeline(spec) {
     const m = chunk.match(/^(.+?)-(.+?)=(.+)$/);
     if (!m) {
       throw new Error(
-        `Bad segment #${i + 1}: "${chunk}" (expected start-end=preset or custom@yaw:…,pitch:…,fov:…)`,
+        `Bad segment #${i + 1}: "${chunk}" (expected start-end=preset or custom@yaw/pitch/fov)`,
       );
     }
     const start = parseTimestamp(m[1]);
@@ -126,7 +135,7 @@ export function formatTimestamp(sec) {
 
 function formatViewToken(s) {
   if (s.preset === 'custom') {
-    return `custom@yaw:${Math.round(s.yaw)},pitch:${Math.round(s.pitch)},fov:${Math.round(s.h_fov)}`;
+    return `custom@${Math.round(s.yaw)}/${Math.round(s.pitch)}/${Math.round(s.h_fov)}`;
   }
   return s.preset;
 }
