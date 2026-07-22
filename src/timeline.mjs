@@ -25,35 +25,47 @@ export function parseTimestamp(token, { allowEnd = false } = {}) {
 
 function parseViewToken(token) {
   const raw = String(token).trim();
-  const lower = raw.toLowerCase();
+  let lens = null;
+  let core = raw;
+  const plus = raw.lastIndexOf('+');
+  if (plus > 0) {
+    const maybeLens = raw.slice(plus + 1).toLowerCase();
+    if (['default', 'linear', 'ultra'].includes(maybeLens)) {
+      lens = maybeLens === 'default' ? null : maybeLens;
+      core = raw.slice(0, plus);
+    }
+  }
+  const lower = core.toLowerCase();
+  let view;
   if (lower === 'custom' || lower.startsWith('custom@')) {
-    const body = lower.startsWith('custom@') ? raw.slice(raw.indexOf('@') + 1) : '';
-    const view = { preset: 'custom', yaw: 0, pitch: 0, h_fov: 90, roll: 0 };
-    // Prefer compact form custom@70/20/90 (no commas — safe in CSV timelines)
+    const body = lower.startsWith('custom@') ? core.slice(core.indexOf('@') + 1) : '';
+    view = { preset: 'custom', yaw: 0, pitch: 0, h_fov: 90, roll: 0 };
     if (/^-?\d+(\.\d+)?\/-?\d+(\.\d+)?\/-?\d+(\.\d+)?$/.test(body.trim())) {
       const [yaw, pitch, fov] = body.split('/').map(Number);
       view.yaw = yaw;
       view.pitch = pitch;
       view.h_fov = fov;
-      return view;
+    } else {
+      for (const part of body.split(/[;,]/)) {
+        const p = part.trim();
+        if (!p) continue;
+        const eq = p.search(/[:=]/);
+        if (eq < 0) continue;
+        const key = p.slice(0, eq).trim().toLowerCase();
+        const val = parseFloat(p.slice(eq + 1));
+        if (!Number.isFinite(val)) continue;
+        if (key === 'yaw' || key === 'y') view.yaw = val;
+        else if (key === 'pitch' || key === 'p') view.pitch = val;
+        else if (key === 'fov' || key === 'h_fov' || key === 'f') view.h_fov = val;
+        else if (key === 'roll' || key === 'r') view.roll = val;
+        else if (key === 'v_fov') view.v_fov = val;
+      }
     }
-    for (const part of body.split(/[;,]/)) {
-      const p = part.trim();
-      if (!p) continue;
-      const eq = p.search(/[:=]/);
-      if (eq < 0) continue;
-      const key = p.slice(0, eq).trim().toLowerCase();
-      const val = parseFloat(p.slice(eq + 1));
-      if (!Number.isFinite(val)) continue;
-      if (key === 'yaw' || key === 'y') view.yaw = val;
-      else if (key === 'pitch' || key === 'p') view.pitch = val;
-      else if (key === 'fov' || key === 'h_fov' || key === 'f') view.h_fov = val;
-      else if (key === 'roll' || key === 'r') view.roll = val;
-      else if (key === 'v_fov') view.v_fov = val;
-    }
-    return view;
+  } else {
+    view = { preset: lower };
   }
-  return { preset: lower };
+  if (lens) view.lens = lens;
+  return view;
 }
 
 function cloneSeg(s) {
@@ -62,6 +74,9 @@ function cloneSeg(s) {
     end: s.end,
     preset: String(s.preset || 'forward').toLowerCase(),
   };
+  if (s.lens && String(s.lens).toLowerCase() !== 'default') {
+    out.lens = String(s.lens).toLowerCase();
+  }
   if (out.preset === 'custom') {
     out.yaw = Number(s.yaw) || 0;
     out.pitch = Number(s.pitch) || 0;
@@ -75,6 +90,9 @@ function cloneSeg(s) {
 export function sameView(a, b) {
   if (!a || !b) return false;
   if (a.preset !== b.preset) return false;
+  const la = a.lens || 'default';
+  const lb = b.lens || 'default';
+  if (la !== lb) return false;
   if (a.preset === 'custom') {
     return a.yaw === b.yaw && a.pitch === b.pitch
       && a.h_fov === b.h_fov && (a.roll || 0) === (b.roll || 0);
@@ -134,10 +152,14 @@ export function formatTimestamp(sec) {
 }
 
 function formatViewToken(s) {
+  let base;
   if (s.preset === 'custom') {
-    return `custom@${Math.round(s.yaw)}/${Math.round(s.pitch)}/${Math.round(s.h_fov)}`;
+    base = `custom@${Math.round(s.yaw)}/${Math.round(s.pitch)}/${Math.round(s.h_fov)}`;
+  } else {
+    base = s.preset;
   }
-  return s.preset;
+  if (s.lens && s.lens !== 'default') return `${base}+${s.lens}`;
+  return base;
 }
 
 /** Serialize segments for CLI `-t`. */
@@ -203,7 +225,25 @@ export function normalizeSegments(segments, durationSec, defaultPreset = 'forwar
 
 function asPatch(presetOrView) {
   if (presetOrView && typeof presetOrView === 'object') {
-    return cloneSeg({ start: 0, end: 1, preset: 'custom', ...presetOrView, preset: 'custom' });
+    const lens = presetOrView.lens && presetOrView.lens !== 'default'
+      ? String(presetOrView.lens).toLowerCase()
+      : undefined;
+    if (presetOrView.preset && presetOrView.preset !== 'custom') {
+      const out = { preset: String(presetOrView.preset).toLowerCase() };
+      if (lens) out.lens = lens;
+      return out;
+    }
+    const out = cloneSeg({
+      start: 0,
+      end: 1,
+      preset: 'custom',
+      yaw: presetOrView.yaw,
+      pitch: presetOrView.pitch,
+      h_fov: presetOrView.h_fov ?? presetOrView.fov,
+      roll: presetOrView.roll,
+      lens,
+    });
+    return out;
   }
   return { preset: String(presetOrView || 'forward').toLowerCase() };
 }

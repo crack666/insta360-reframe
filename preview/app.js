@@ -18,8 +18,19 @@ const PRESET_COLORS = {
   back: '#6c757d',
   custom: '#9aa0a8',
 };
+const LENS_GEARS = {
+  default: { id: 'default', label: 'Default', h_fov: null, v_fov: null },
+  linear: { id: 'linear', label: 'Linear', h_fov: 78, v_fov: 50 },
+  ultra: { id: 'ultra', label: 'Ultra', h_fov: 110, v_fov: 78 },
+};
 const PEEK_NAMES = ['forward', 'selfie', 'left', 'right'];
 const DEFAULT_PRESET = 'forward';
+
+function resolveLensFov(baseFov, lensId) {
+  const lens = LENS_GEARS[lensId] || LENS_GEARS.default;
+  if (lens.h_fov != null) return lens.h_fov;
+  return baseFov;
+}
 
 const el = {
   view: document.getElementById('view'),
@@ -102,6 +113,7 @@ const state = {
   lastY: 0,
   duration: 0,
   rate: 1,
+  lens: 'default',
   /** last playhead time we synced view from */
   followT: -1,
   /** timeline preset last applied to the view */
@@ -115,6 +127,9 @@ function cloneSeg(s) {
     end: s.end,
     preset: String(s.preset || DEFAULT_PRESET).toLowerCase(),
   };
+  if (s.lens && String(s.lens).toLowerCase() !== 'default') {
+    out.lens = String(s.lens).toLowerCase();
+  }
   if (out.preset === 'custom') {
     out.yaw = Number(s.yaw) || 0;
     out.pitch = Number(s.pitch) || 0;
@@ -126,6 +141,7 @@ function cloneSeg(s) {
 
 function sameView(a, b) {
   if (!a || !b || a.preset !== b.preset) return false;
+  if ((a.lens || 'default') !== (b.lens || 'default')) return false;
   if (a.preset === 'custom') {
     return a.yaw === b.yaw && a.pitch === b.pitch && a.h_fov === b.h_fov;
   }
@@ -170,7 +186,24 @@ function normalizeSegments(list, durationSec, defaultPreset = DEFAULT_PRESET) {
 
 function asPatch(presetOrView) {
   if (presetOrView && typeof presetOrView === 'object') {
-    return cloneSeg({ start: 0, end: 1, preset: 'custom', ...presetOrView, preset: 'custom' });
+    const lens = presetOrView.lens && presetOrView.lens !== 'default'
+      ? String(presetOrView.lens).toLowerCase()
+      : undefined;
+    if (presetOrView.preset && presetOrView.preset !== 'custom') {
+      const out = { preset: String(presetOrView.preset).toLowerCase() };
+      if (lens) out.lens = lens;
+      return out;
+    }
+    return cloneSeg({
+      start: 0,
+      end: 1,
+      preset: 'custom',
+      yaw: presetOrView.yaw,
+      pitch: presetOrView.pitch,
+      h_fov: presetOrView.h_fov ?? presetOrView.fov,
+      roll: presetOrView.roll,
+      lens,
+    });
   }
   return { preset: String(presetOrView || DEFAULT_PRESET).toLowerCase() };
 }
@@ -236,10 +269,14 @@ function presetAt(list, t) {
 }
 
 function formatViewToken(s) {
+  let base;
   if (s.preset === 'custom') {
-    return `custom@${Math.round(s.yaw)}/${Math.round(s.pitch)}/${Math.round(s.h_fov)}`;
+    base = `custom@${Math.round(s.yaw)}/${Math.round(s.pitch)}/${Math.round(s.h_fov)}`;
+  } else {
+    base = s.preset;
   }
-  return s.preset;
+  if (s.lens && s.lens !== 'default') return `${base}+${s.lens}`;
+  return base;
 }
 
 function serializeTimeline(list) {
@@ -248,32 +285,45 @@ function serializeTimeline(list) {
 
 function parseViewToken(token) {
   const raw = String(token).trim();
-  const lower = raw.toLowerCase();
+  let lens = null;
+  let core = raw;
+  const plus = raw.lastIndexOf('+');
+  if (plus > 0) {
+    const maybeLens = raw.slice(plus + 1).toLowerCase();
+    if (['default', 'linear', 'ultra'].includes(maybeLens)) {
+      lens = maybeLens === 'default' ? null : maybeLens;
+      core = raw.slice(0, plus);
+    }
+  }
+  const lower = core.toLowerCase();
+  let view;
   if (lower === 'custom' || lower.startsWith('custom@')) {
-    const body = lower.startsWith('custom@') ? raw.slice(raw.indexOf('@') + 1) : '';
-    const view = { preset: 'custom', yaw: 0, pitch: 0, h_fov: 90 };
+    const body = lower.startsWith('custom@') ? core.slice(core.indexOf('@') + 1) : '';
+    view = { preset: 'custom', yaw: 0, pitch: 0, h_fov: 90 };
     if (/^-?\d+(\.\d+)?\/-?\d+(\.\d+)?\/-?\d+(\.\d+)?$/.test(body.trim())) {
       const [yaw, pitch, fov] = body.split('/').map(Number);
       view.yaw = yaw;
       view.pitch = pitch;
       view.h_fov = fov;
-      return view;
+    } else {
+      for (const part of body.split(/[;,]/)) {
+        const p = part.trim();
+        if (!p) continue;
+        const eq = p.search(/[:=]/);
+        if (eq < 0) continue;
+        const key = p.slice(0, eq).trim().toLowerCase();
+        const val = parseFloat(p.slice(eq + 1));
+        if (!Number.isFinite(val)) continue;
+        if (key === 'yaw' || key === 'y') view.yaw = val;
+        else if (key === 'pitch' || key === 'p') view.pitch = val;
+        else if (key === 'fov' || key === 'h_fov' || key === 'f') view.h_fov = val;
+      }
     }
-    for (const part of body.split(/[;,]/)) {
-      const p = part.trim();
-      if (!p) continue;
-      const eq = p.search(/[:=]/);
-      if (eq < 0) continue;
-      const key = p.slice(0, eq).trim().toLowerCase();
-      const val = parseFloat(p.slice(eq + 1));
-      if (!Number.isFinite(val)) continue;
-      if (key === 'yaw' || key === 'y') view.yaw = val;
-      else if (key === 'pitch' || key === 'p') view.pitch = val;
-      else if (key === 'fov' || key === 'h_fov' || key === 'f') view.h_fov = val;
-    }
-    return view;
+  } else {
+    view = { preset: lower };
   }
-  return { preset: lower };
+  if (lens) view.lens = lens;
+  return view;
 }
 
 function parseTimelineLoose(spec) {
@@ -306,10 +356,11 @@ function colorFor(name) {
 }
 
 function segLabel(s) {
+  const lens = s.lens && s.lens !== 'default' ? ` · ${s.lens}` : '';
   if (s.preset === 'custom') {
-    return `custom (${Math.round(s.yaw)}°/${Math.round(s.pitch)}°/${Math.round(s.h_fov)}°)`;
+    return `custom (${Math.round(s.yaw)}°/${Math.round(s.pitch)}°/${Math.round(s.h_fov)}°)${lens}`;
   }
-  return s.preset;
+  return `${s.preset}${lens}`;
 }
 
 // —— Three.js main view ——
@@ -453,15 +504,76 @@ function syncViewToPlayhead({ force = false } = {}) {
 /** Apply named preset or custom segment angles to the main view. */
 function applySegmentLook(seg) {
   if (!seg) return;
+  const lensId = seg.lens || 'default';
+  state.lens = lensId;
+  highlightLens();
   if (seg.preset === 'custom') {
     state.preset = 'custom';
     state.yaw = Number(seg.yaw) || 0;
     state.pitch = Number(seg.pitch) || 0;
-    state.fov = Number(seg.h_fov) || 90;
+    state.fov = resolveLensFov(Number(seg.h_fov) || 90, lensId);
     applyLook();
     return;
   }
-  if (PRESETS[seg.preset]) setPreset(seg.preset);
+  if (PRESETS[seg.preset]) {
+    const p = PRESETS[seg.preset];
+    state.preset = seg.preset;
+    state.yaw = p.yaw;
+    state.pitch = p.pitch;
+    state.fov = resolveLensFov(p.h_fov, lensId);
+    if (el.saveTarget) el.saveTarget.value = seg.preset;
+    applyLook();
+  }
+}
+
+function highlightLens() {
+  const box = document.getElementById('lenses');
+  if (!box) return;
+  for (const btn of box.querySelectorAll('button[data-lens]')) {
+    btn.classList.toggle('active', btn.dataset.lens === state.lens);
+  }
+}
+
+function withActiveLens(patch) {
+  if (state.lens && state.lens !== 'default') {
+    if (typeof patch === 'string') return { preset: patch, lens: state.lens };
+    return { ...patch, lens: state.lens };
+  }
+  return patch;
+}
+
+function doCut(presetOrView) {
+  const t = video.currentTime || 0;
+  let patch = withActiveLens(presetOrView);
+  let label;
+  if (patch && typeof patch === 'object') {
+    if (patch.preset && patch.preset !== 'custom' && patch.yaw == null) {
+      label = segLabel({ preset: patch.preset, lens: patch.lens });
+    } else {
+      patch = {
+        yaw: Math.round(patch.yaw ?? state.yaw),
+        pitch: Math.round(patch.pitch ?? state.pitch),
+        h_fov: Math.round(patch.h_fov ?? patch.fov ?? state.fov),
+        lens: patch.lens,
+      };
+      label = segLabel({ preset: 'custom', ...patch });
+    }
+  } else {
+    const name = patch || state.preset || nearestPresetName();
+    if (name === 'custom') {
+      doCut({ yaw: state.yaw, pitch: state.pitch, h_fov: state.fov });
+      return;
+    }
+    patch = withActiveLens(name);
+    label = segLabel(typeof patch === 'string' ? { preset: patch } : patch);
+  }
+  segments = switchAt(segments, t, patch, state.duration);
+  syncFromSegments();
+  el.status.textContent = `Cut @ ${fmtTime(t)} → ${label}`;
+}
+
+function doCutCustom() {
+  doCut({ yaw: state.yaw, pitch: state.pitch, h_fov: state.fov });
 }
 
 function setPreset(name) {
@@ -739,35 +851,6 @@ function acceptSuggestion(s) {
   el.status.textContent = `Übernommen: ${fmtTime(s.start)}–${fmtTime(s.end)} = ${s.preset}`;
 }
 
-function doCut(presetOrView) {
-  const t = video.currentTime || 0;
-  let patch = presetOrView;
-  let label;
-  if (patch && typeof patch === 'object') {
-    patch = {
-      yaw: Math.round(patch.yaw),
-      pitch: Math.round(patch.pitch),
-      h_fov: Math.round(patch.h_fov ?? patch.fov ?? state.fov),
-    };
-    label = `custom (${patch.yaw}°/${patch.pitch}°/${patch.h_fov}°)`;
-  } else {
-    const name = patch || state.preset || nearestPresetName();
-    if (name === 'custom') {
-      doCut({ yaw: state.yaw, pitch: state.pitch, h_fov: state.fov });
-      return;
-    }
-    patch = name;
-    label = name;
-  }
-  segments = switchAt(segments, t, patch, state.duration);
-  syncFromSegments();
-  el.status.textContent = `Cut @ ${fmtTime(t)} → ${label}`;
-}
-
-function doCutCustom() {
-  doCut({ yaw: state.yaw, pitch: state.pitch, h_fov: state.fov });
-}
-
 function rebuildPresetUi() {
   el.presets.innerHTML = '';
   el.saveTarget.innerHTML = '';
@@ -846,6 +929,28 @@ el.cutHere.addEventListener('click', () => doCut(state.preset));
 el.cutCustom.addEventListener('click', () => doCutCustom());
 el.cutForward.addEventListener('click', () => doCut('forward'));
 el.cutSelfie.addEventListener('click', () => doCut('selfie'));
+
+document.getElementById('lenses')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-lens]');
+  if (!btn) return;
+  state.lens = btn.dataset.lens;
+  highlightLens();
+  // Live-preview FOV for current look
+  const base = state.preset === 'custom'
+    ? state.fov
+    : (PRESETS[state.preset]?.h_fov ?? state.fov);
+  // Re-resolve from segment or preset base without stacking
+  const seg = segmentAt(segments, video.currentTime || 0);
+  if (seg.preset === 'custom') {
+    state.fov = resolveLensFov(Number(seg.h_fov) || 90, state.lens);
+  } else if (PRESETS[seg.preset || state.preset]) {
+    state.fov = resolveLensFov(PRESETS[seg.preset || state.preset].h_fov, state.lens);
+  } else {
+    state.fov = resolveLensFov(base, state.lens);
+  }
+  applyLook();
+  el.status.textContent = `Lens: ${state.lens} (FOV≈${Math.round(state.fov)}°) — gilt für nächste Cuts`;
+});
 el.removeCut.addEventListener('click', () => {
   segments = removeCutNear(segments, video.currentTime || 0, state.duration);
   syncFromSegments();

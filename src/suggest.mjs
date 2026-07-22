@@ -266,7 +266,7 @@ export async function analyzeSuggestions(videoPath, opts = {}) {
           end: Number(t1.toFixed(1)),
           preset: pausePreset,
           confidence: Number(Math.min(0.92, 0.5 + skin).toFixed(2)),
-          reason: `Selfie-Sektor: Hautanteil ~${Math.round(skin * 100)}% @ ${t.toFixed(1)}s`,
+          reason: `Im gespeicherten Selfie-Winkel wirkt ~${Math.round(skin * 100)}% der Pixel hautfarben (@ ${t.toFixed(1)}s) → Selfie prüfen`,
           skin: Number(skin.toFixed(3)),
         }, Math.max(2, skinStepSec));
       }

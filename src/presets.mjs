@@ -79,6 +79,45 @@ export function resolvePreset(name, presets = loadPresets()) {
   return { name: key, ...presets[key] };
 }
 
+/**
+ * Insta360-like "View Angle Gear" → FOV profile for flat reframe.
+ * `default` = keep preset/custom FOV as stored.
+ * Approximate Studio Linear / Ultra (not identical — Studio also changes projection feel).
+ */
+export const LENS_GEARS = {
+  default: { id: 'default', label: 'Default', h_fov: null, v_fov: null },
+  linear: { id: 'linear', label: 'Linear', h_fov: 78, v_fov: 50 },
+  ultra: { id: 'ultra', label: 'Ultra', h_fov: 110, v_fov: 78 },
+};
+
+export function resolveLens(lens) {
+  const key = String(lens || 'default').toLowerCase();
+  return LENS_GEARS[key] || LENS_GEARS.default;
+}
+
+/**
+ * Resolve full view for a timeline segment (named preset or custom + optional lens).
+ */
+export function resolveSegmentView(seg, presets = loadPresets()) {
+  let view;
+  if (seg.preset === 'custom') {
+    view = {
+      name: 'custom',
+      yaw: Number(seg.yaw) || 0,
+      pitch: Number(seg.pitch) || 0,
+      roll: Number(seg.roll) || 0,
+      h_fov: Number(seg.h_fov ?? seg.fov) || 90,
+      v_fov: Number(seg.v_fov) || 70,
+    };
+  } else {
+    view = resolvePreset(seg.preset, presets);
+  }
+  const lens = resolveLens(seg.lens);
+  if (lens.h_fov != null) view = { ...view, h_fov: lens.h_fov };
+  if (lens.v_fov != null) view = { ...view, v_fov: lens.v_fov };
+  return { ...view, lens: lens.id };
+}
+
 export function v360Filter(view, { width = 1280, height = 720 } = {}) {
   const { yaw, pitch, roll, h_fov, v_fov } = view;
   return [

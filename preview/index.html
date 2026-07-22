@@ -25,6 +25,13 @@
           <button type="button" id="cutForward">→ forward</button>
           <button type="button" id="cutSelfie">→ selfie</button>
         </div>
+        <label>View Angle Gear (Zoom/FOV für nächste Cuts)</label>
+        <div class="row lenses" id="lenses">
+          <button type="button" data-lens="default" class="active" title="Preset-/Custom-FOV wie gespeichert">Default</button>
+          <button type="button" data-lens="linear" title="Enger, weniger Weitwinkel (~78°)">Linear</button>
+          <button type="button" data-lens="ultra" title="Weiter, action-cam (~110°)">Ultra</button>
+        </div>
+        <p class="hint">Default = FOV aus Preset/Custom. Linear/Ultra überschreiben nur den Zoom für das Segment — Richtung bleibt.</p>
         <details class="calibrate">
           <summary>Winkel kalibrieren (presets.json)</summary>
           <label>Ziel-Preset</label>

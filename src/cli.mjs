@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPresets, resolvePreset } from './presets.mjs';
+import { loadPresets, resolveSegmentView } from './presets.mjs';
 import { parseTimeline, resolveTimeline } from './timeline.mjs';
 import {
   probeDuration,
@@ -145,17 +145,7 @@ async function main() {
   }
 
   function viewForSegment(seg) {
-    if (seg.preset === 'custom') {
-      return {
-        name: 'custom',
-        yaw: Number(seg.yaw) || 0,
-        pitch: Number(seg.pitch) || 0,
-        roll: Number(seg.roll) || 0,
-        h_fov: Number(seg.h_fov ?? seg.fov) || 90,
-        v_fov: Number(seg.v_fov) || 70,
-      };
-    }
-    return resolvePreset(seg.preset);
+    return resolveSegmentView(seg);
   }
 
   const encoder = await pickVideoEncoder();
@@ -178,9 +168,10 @@ async function main() {
       if (opts.fov != null) view = { ...view, h_fov: opts.fov };
     }
     const tag = seg.preset === 'custom' ? 'custom' : seg.preset;
-    const part = path.join(workDir, `seg_${String(i).padStart(3, '0')}_${tag}.mp4`);
+    const lensTag = seg.lens && seg.lens !== 'default' ? `+${seg.lens}` : '';
+    const part = path.join(workDir, `seg_${String(i).padStart(3, '0')}_${tag}${lensTag.replace('+', '_')}.mp4`);
     console.log(
-      `  [${i + 1}/${segments.length}] ${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s  ${tag}` +
+      `  [${i + 1}/${segments.length}] ${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s  ${tag}${lensTag}` +
       `  (yaw=${view.yaw} pitch=${view.pitch} fov=${view.h_fov})`,
     );
     await encodeSegment({

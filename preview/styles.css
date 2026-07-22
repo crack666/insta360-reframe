@@ -48,6 +48,9 @@ textarea { font: 12px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .cut-row .primary { grid-column: 1 / -1; }
 .cut-row .custom-cut { grid-column: 1 / -1; border-color: #6a7180; background: #2a2e36; }
 .cut-row .custom-cut.active { border-color: #9aa0a8; background: #3a404c; }
+.lenses button { flex: 1 1 28%; }
+.lenses button[data-lens="linear"] { border-bottom: 2px solid #7eb8d4; }
+.lenses button[data-lens="ultra"] { border-bottom: 2px solid #e0b35a; }
 
 button { background: var(--btn); color: var(--text); border: 1px solid #3a4358; border-radius: 6px;
   padding: 7px 10px; cursor: pointer; font: inherit; }
