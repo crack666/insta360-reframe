@@ -9,6 +9,16 @@
   "error": null,
   "proxy": null,
   "timeline": null,
+  "viewOffset": {
+    "yaw": 0,
+    "pitch": 0,
+    "roll": 0,
+    "_comment": "Mount rotation added to named presets that have NO take override"
+  },
+  "presetOverrides": {
+    "_comment": "Optional absolute named-preset angles for this take only (presets.json untouched)",
+    "selfie": { "yaw": 70, "pitch": 40, "h_fov": 120, "v_fov": 65 }
+  },
   "final": {
     "path": null,
     "width": 1920,

@@ -28,6 +28,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 #view canvas { display: block; width: 100%; height: 100%; }
 
 .panel-head h1 { font-size: 15px; margin: 0 0 2px; font-weight: 650; }
+.panel-head a { color: var(--accent); text-decoration: none; }
+.panel-head a:hover { text-decoration: underline; }
 h2 { font-size: 11px; margin: 16px 0 6px; color: var(--muted); font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.04em; }
 .hint { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
@@ -69,6 +71,7 @@ button.reject { border-color: #555; }
 .presets button[data-preset="left"] { border-bottom: 2px solid var(--left); }
 .presets button[data-preset="right"] { border-bottom: 2px solid var(--right); }
 .presets button[data-preset="back"] { border-bottom: 2px solid var(--back); }
+.presets button.take-local::after { content: ' ·T'; font-size: 10px; color: var(--accent); }
 
 .calibrate { margin: 8px 0; padding: 8px; border: 1px dashed #2c3344; border-radius: 8px; }
 .calibrate summary { cursor: pointer; color: var(--muted); font-size: 12px; }

@@ -1,5 +1,9 @@
 /**
- * MediaSDK stitch via Docker (proxy | final profiles).
+ * MediaSDK stitch — backends: windows (native) | docker
+ *
+ *   INSTA360_STITCH_BACKEND=windows|docker   (default: windows on win32 if SDK present, else docker)
+ *   INSTA360_MEDIASDK_WIN=.../MediaSDK-root  (bin/ + models/)
+ *   INSTA360_MEDIASDK_IMAGE=ai-stack/insta360-mediasdk:3.1.1
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -15,9 +19,36 @@ import {
 
 const DEFAULT_IMAGE = process.env.INSTA360_MEDIASDK_IMAGE || 'ai-stack/insta360-mediasdk:3.1.1';
 
-function runDocker(args, { onStdout, onStderr } = {}) {
+export function defaultWindowsSdkRoot(root = getInstaRoot()) {
+  return process.env.INSTA360_MEDIASDK_WIN
+    || path.join(root, 'sdk', 'windows', 'MediaSDK-root');
+}
+
+export function resolveWindowsMediaSdk(root = getInstaRoot()) {
+  const sdkRoot = path.resolve(defaultWindowsSdkRoot(root));
+  const exe = path.join(sdkRoot, 'bin', 'MediaSDKTest.exe');
+  const models = path.join(sdkRoot, 'models');
+  const ok = fs.existsSync(exe) && fs.existsSync(models);
+  return { sdkRoot, exe, models, ok };
+}
+
+/**
+ * @returns {'windows'|'docker'}
+ */
+export function resolveStitchBackend({ backend, root = getInstaRoot() } = {}) {
+  const forced = (backend || process.env.INSTA360_STITCH_BACKEND || '').toLowerCase();
+  if (forced === 'windows' || forced === 'win' || forced === 'native') return 'windows';
+  if (forced === 'docker') return 'docker';
+  // Auto: prefer native Windows SDK when present
+  if (process.platform === 'win32' && resolveWindowsMediaSdk(root).ok) return 'windows';
+  return 'docker';
+}
+
+function runProcess(cmd, args, { cwd, onStdout, onStderr, env } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, {
+    const child = spawn(cmd, args, {
+      cwd,
+      env: env ? { ...process.env, ...env } : process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -36,7 +67,7 @@ function runDocker(args, { onStdout, onStderr } = {}) {
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(`docker exited ${code}\n${stderr.slice(-3000)}`));
+      else reject(new Error(`${cmd} exited ${code}\n${stderr.slice(-3000)}`));
     });
   });
 }
@@ -81,12 +112,88 @@ export function buildStitchDockerArgs({
   return args;
 }
 
+/** Native Windows CLI args (host paths). cwd must be bin/ for DLL resolution. */
+export function buildStitchWindowsArgs({
+  inputsHost,
+  outputHost,
+  outputSize,
+  flowstate = true,
+  directionLock = true,
+  modelsDir,
+}) {
+  const args = [
+    '-inputs', inputsHost.map((p) => path.resolve(p)).join(','),
+    '-output', path.resolve(outputHost),
+    '-model_root_dir', path.resolve(modelsDir),
+    '-output_size', outputSize,
+  ];
+  if (flowstate) args.push('-enable_flowstate');
+  if (directionLock) args.push('-enable_directionlock');
+  return args;
+}
+
+async function runStitchBackend({
+  backend,
+  inputsHost,
+  outputHost,
+  outputSize,
+  flowstate,
+  directionLock,
+  root,
+  onLog,
+}) {
+  fs.mkdirSync(path.dirname(outputHost), { recursive: true });
+
+  if (backend === 'windows') {
+    const sdk = resolveWindowsMediaSdk(root);
+    if (!sdk.ok) {
+      throw new Error(
+        `Windows MediaSDK not found (expected ${sdk.exe}). Unpack under sdk/windows or set INSTA360_MEDIASDK_WIN.`,
+      );
+    }
+    const args = buildStitchWindowsArgs({
+      inputsHost,
+      outputHost,
+      outputSize,
+      flowstate,
+      directionLock,
+      modelsDir: sdk.models,
+    });
+    onLog?.(`stitch backend=windows exe=${sdk.exe}`);
+    onLog?.(`output_size=${outputSize} → ${outputHost}`);
+    // cwd=bin so sibling DLLs resolve without PATH install
+    await runProcess(sdk.exe, args, {
+      cwd: path.dirname(sdk.exe),
+      onStdout: (s) => onLog?.(s.trimEnd()),
+      onStderr: (s) => onLog?.(s.trimEnd()),
+    });
+    return { backend: 'windows', exe: sdk.exe };
+  }
+
+  const args = buildStitchDockerArgs({
+    inputsHost,
+    outputHost,
+    outputSize,
+    flowstate,
+    directionLock,
+    root,
+  });
+  onLog?.(`stitch backend=docker ${args.join(' ').slice(0, 180)}…`);
+  onLog?.(`output_size=${outputSize} → ${outputHost}`);
+  await runProcess('docker', args, {
+    onStdout: (s) => onLog?.(s.trimEnd()),
+    onStderr: (s) => onLog?.(s.trimEnd()),
+  });
+  return { backend: 'docker' };
+}
+
 /**
  * @param {'proxy'|'final'} profile
  */
 export async function stitchTake(projectId, takeId, {
   profile = 'proxy',
   root = getInstaRoot(),
+  backend,
   onLog,
   keepOutput = true,
 } = {}) {
@@ -99,56 +206,63 @@ export async function stitchTake(projectId, takeId, {
     ? (take.stitch?.proxyOutputSize || '1920x960')
     : (take.stitch?.finalOutputSize || suggestFinalOutputSize(take.final?.width || 1920));
 
+  const resolvedBackend = resolveStitchBackend({ backend, root });
+
   take.status = isProxy ? 'stitching_proxy' : 'rendering_final';
   take.error = null;
+  take.stitch = { ...take.stitch, lastBackend: resolvedBackend };
   saveTake(projectId, take, root);
 
-  fs.mkdirSync(path.dirname(outputHost), { recursive: true });
   if (fs.existsSync(outputHost)) fs.unlinkSync(outputHost);
 
-  const args = buildStitchDockerArgs({
-    inputsHost: take.raw,
-    outputHost,
-    outputSize,
-    flowstate: take.stitch?.flowstate !== false,
-    directionLock: take.stitch?.directionLock !== false,
-    root,
-  });
-
-  onLog?.(`stitch ${profile}: docker ${args.join(' ').slice(0, 200)}…`);
-  onLog?.(`output_size=${outputSize} → ${outputHost}`);
-
   try {
-    await runDocker(args, {
-      onStdout: (s) => onLog?.(s.trimEnd()),
-      onStderr: (s) => onLog?.(s.trimEnd()),
+    await runStitchBackend({
+      backend: resolvedBackend,
+      inputsHost: take.raw,
+      outputHost,
+      outputSize,
+      flowstate: take.stitch?.flowstate !== false,
+      directionLock: take.stitch?.directionLock !== false,
+      root,
+      onLog,
     });
   } catch (err) {
-    take.status = 'error';
-    take.error = String(err.message || err);
-    saveTake(projectId, take, root);
+    const { take: t } = loadTake(projectId, takeId, root);
+    t.status = 'error';
+    t.error = String(err.message || err);
+    saveTake(projectId, t, root);
     throw err;
   }
 
+  const { take: after } = loadTake(projectId, takeId, root);
   if (!fs.existsSync(outputHost)) {
-    take.status = 'error';
-    take.error = `Stitch finished but output missing: ${outputHost}`;
-    saveTake(projectId, take, root);
-    throw new Error(take.error);
+    after.status = 'error';
+    after.error = `Stitch finished but output missing: ${outputHost}`;
+    saveTake(projectId, after, root);
+    throw new Error(after.error);
   }
 
   const [w, h] = String(outputSize).split('x').map(Number);
   if (isProxy) {
-    take.proxy = { path: outputHost, width: w || null, height: h || null, outputSize };
-    take.status = 'proxy_ready';
-  } else if (!keepOutput) {
-    // caller may delete; still record last master path used
-    take._lastMaster = outputHost;
+    after.proxy = {
+      path: outputHost,
+      width: w || null,
+      height: h || null,
+      outputSize,
+      backend: resolvedBackend,
+    };
+    after.status = 'proxy_ready';
   } else {
-    take._lastMaster = outputHost;
+    after._lastMaster = outputHost;
   }
-  saveTake(projectId, take, root);
-  return { take, outputHost, outputSize, profile };
+  saveTake(projectId, after, root);
+  return {
+    take: after,
+    outputHost,
+    outputSize,
+    profile,
+    backend: resolvedBackend,
+  };
 }
 
 /** Attach an existing equirect as proxy (dev / skip long stitch). */

@@ -10,8 +10,10 @@
   <div id="app">
     <aside id="panel">
       <header class="panel-head">
+        <p class="hint"><a href="/" id="backHome">← Projekt</a></p>
         <h1>Reframe Editor</h1>
         <p class="hint" id="videoName">Lädt…</p>
+        <p class="hint" id="takeContext" hidden></p>
       </header>
 
       <section>
@@ -34,6 +36,29 @@
           <button type="button" data-lens="ultra" title="Weiter, action-cam (~140°)">Ultra</button>
         </div>
         <p class="hint">Default = FOV aus Preset/Custom. Linear/Ultra überschreiben nur den Zoom für das Segment — Richtung bleibt.</p>
+
+        <details class="calibrate" id="takeAlignBox">
+          <summary>Take-Mount-Offset (alle Presets gleich drehen)</summary>
+          <p class="hint">Optional: dreht <em>alle</em> named Presets um denselben Winkel (Mount).
+            Einzelnes Preset (z.B. nur Selfie) → unten „Nur für diesen Take“.</p>
+          <label>Yaw-Offset <span id="offYawVal">0</span>°</label>
+          <input type="range" id="offYaw" min="-180" max="180" step="1" value="0" />
+          <label>Pitch-Offset <span id="offPitchVal">0</span>°</label>
+          <input type="range" id="offPitch" min="-45" max="45" step="1" value="0" />
+          <div class="row">
+            <button type="button" id="saveOffset" class="primary">Offset speichern</button>
+            <button type="button" id="offsetFromForward" title="Aktueller Blick = forward">Blick = forward</button>
+            <button type="button" id="resetOffset">Offset null</button>
+          </div>
+          <label>Von anderem Take übernehmen</label>
+          <div class="row">
+            <select id="copyOffsetFrom"></select>
+            <button type="button" id="copyOffsetBtn">Übernehmen</button>
+          </div>
+          <label class="check"><input type="checkbox" id="offsetAsDefault" /> Als Default für neue Takes im Projekt</label>
+          <p class="hint" id="offsetStatus">Kein Take-Kontext — Offset nur mit Projekt/Take.</p>
+        </details>
+
         <details class="calibrate" id="calibrateBox" open>
           <summary>Named Presets kalibrieren</summary>
           <label>Ziel-Preset</label>
@@ -45,11 +70,11 @@
           <label>H-FOV <span id="fovVal">120</span>°</label>
           <input type="range" id="fov" min="40" max="150" step="1" value="120" />
           <div class="row">
-            <button type="button" id="saveTakePreset" class="primary" title="Nur dieser Take">Nur für diesen Take</button>
-            <button type="button" id="clearTakePreset">Take-Override weg</button>
+            <button type="button" id="saveTakePreset" class="primary" title="Nur dieser Take — andere Takes &amp; presets.json unverändert">Nur für diesen Take</button>
+            <button type="button" id="clearTakePreset" title="Take-Override entfernen → wieder global + Offset">Take-Override weg</button>
           </div>
           <div class="row">
-            <button type="button" id="savePreset" title="presets.json — alle Takes">Global speichern</button>
+            <button type="button" id="savePreset" title="Schreibt in presets.json — gilt für alle Takes">Global speichern</button>
             <button type="button" id="reloadPresets">Neu laden</button>
           </div>
           <p class="hint" id="presetPath"></p>

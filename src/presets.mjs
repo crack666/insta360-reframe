@@ -80,6 +80,41 @@ export function resolvePreset(name, presets = loadPresets()) {
 }
 
 /**
+ * Normalize a take-local preset override (absolute angles for that take).
+ * Partial allowed — missing fields fall back when merging.
+ */
+export function normalizePresetOverride(name, raw = {}) {
+  const out = {};
+  if (raw.yaw != null && raw.yaw !== '') out.yaw = Number(raw.yaw) || 0;
+  if (raw.pitch != null && raw.pitch !== '') out.pitch = Number(raw.pitch) || 0;
+  if (raw.roll != null && raw.roll !== '') out.roll = Number(raw.roll) || 0;
+  if (raw.h_fov != null && raw.h_fov !== '') out.h_fov = Number(raw.h_fov) || 120;
+  if (raw.v_fov != null && raw.v_fov !== '') out.v_fov = Number(raw.v_fov) || 70;
+  if (raw.label != null) out.label = String(raw.label);
+  return out;
+}
+
+/**
+ * Merge global presets with take-local overrides.
+ * Override angles are absolute for that take (viewOffset is NOT applied on top).
+ */
+export function mergePresetsWithOverrides(presets = loadPresets(), overrides = null) {
+  const base = presets && typeof presets === 'object' ? presets : {};
+  const ovr = overrides && typeof overrides === 'object' ? overrides : {};
+  const out = {};
+  for (const [name, raw] of Object.entries(base)) {
+    const key = String(name).toLowerCase();
+    const o = ovr[key] || ovr[name];
+    if (o && typeof o === 'object') {
+      out[key] = normalizePreset(key, { ...raw, ...normalizePresetOverride(key, o) });
+    } else {
+      out[key] = normalizePreset(key, raw);
+    }
+  }
+  return out;
+}
+
+/**
  * Insta360-like "View Angle Gear" → FOV profile for flat reframe.
  * `default` = keep preset/custom FOV as stored.
  * Approximate Studio Linear / Ultra (not identical — Studio also changes projection feel).
@@ -95,10 +130,49 @@ export function resolveLens(lens) {
   return LENS_GEARS[key] || LENS_GEARS.default;
 }
 
+/** Normalize yaw to [-180, 180). */
+export function normalizeYaw(deg) {
+  let y = Number(deg) || 0;
+  y = ((y + 540) % 360) - 180;
+  return y;
+}
+
+export function emptyViewOffset() {
+  return { yaw: 0, pitch: 0, roll: 0 };
+}
+
+export function normalizeViewOffset(raw = {}) {
+  return {
+    yaw: Number(raw.yaw) || 0,
+    pitch: Number(raw.pitch) || 0,
+    roll: Number(raw.roll) || 0,
+  };
+}
+
+/** Add take/session offset to a view (named-preset frame). */
+export function applyViewOffset(view, offset) {
+  const o = normalizeViewOffset(offset);
+  if (!o.yaw && !o.pitch && !o.roll) return { ...view };
+  const pitch = Math.max(-89, Math.min(89, (Number(view.pitch) || 0) + o.pitch));
+  return {
+    ...view,
+    yaw: normalizeYaw((Number(view.yaw) || 0) + o.yaw),
+    pitch,
+    roll: (Number(view.roll) || 0) + o.roll,
+  };
+}
+
 /**
  * Resolve full view for a timeline segment (named preset or custom + optional lens).
+ * @param {{
+ *   offset?: {yaw?:number,pitch?:number,roll?:number},
+ *   overrides?: Record<string, object>,
+ * }} [opts]
+ *   `overrides` = take-local absolute named presets (skip viewOffset for those).
+ *   `offset` applies only to named presets without a take override.
+ *   Custom segments store absolute angles (no offset / override).
  */
-export function resolveSegmentView(seg, presets = loadPresets()) {
+export function resolveSegmentView(seg, presets = loadPresets(), opts = {}) {
   let view;
   if (seg.preset === 'custom') {
     view = {
@@ -110,7 +184,15 @@ export function resolveSegmentView(seg, presets = loadPresets()) {
       v_fov: Number(seg.v_fov) || 70,
     };
   } else {
-    view = resolvePreset(seg.preset, presets);
+    const key = String(seg.preset || '').toLowerCase();
+    const ovr = opts.overrides && (opts.overrides[key] || opts.overrides[seg.preset]);
+    if (ovr && typeof ovr === 'object') {
+      const base = presets[key] || {};
+      view = { name: key, ...normalizePreset(key, { ...base, ...normalizePresetOverride(key, ovr) }) };
+    } else {
+      view = resolvePreset(seg.preset, presets);
+      if (opts.offset) view = applyViewOffset(view, opts.offset);
+    }
   }
   const lens = resolveLens(seg.lens);
   if (lens.h_fov != null) view = { ...view, h_fov: lens.h_fov };

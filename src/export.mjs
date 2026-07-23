@@ -10,6 +10,7 @@ import {
   pickVideoEncoder,
   encodeSegment,
   concatSegments,
+  defaultAudioBitrate,
 } from './ffmpeg.mjs';
 
 /**
@@ -27,6 +28,8 @@ import {
  * @param {string} [opts.bitrate]  e.g. "8M" — if set, overrides CQ/CRF
  * @param {string} [opts.audioBitrate]
  * @param {string} [opts.workDir]
+ * @param {{yaw?:number,pitch?:number,roll?:number}} [opts.viewOffset] take offset for named presets
+ * @param {Record<string, object>} [opts.presetOverrides] take-local absolute named presets
  * @param {(msg: object) => void} [opts.onProgress]
  */
 export async function exportFlat(opts) {
@@ -35,6 +38,8 @@ export async function exportFlat(opts) {
   const width = opts.width || 1920;
   const height = opts.height || 1080;
   const preset = opts.preset || 'forward';
+  const viewOffset = opts.viewOffset || null;
+  const presetOverrides = opts.presetOverrides || null;
   const onProgress = opts.onProgress || (() => {});
 
   if (!fs.existsSync(input)) throw new Error(`Input not found: ${input}`);
@@ -74,12 +79,13 @@ export async function exportFlat(opts) {
     segments = [{ start: 0, end: duration, preset }];
   }
 
+  const quality = opts.quality || 'medium';
   const encoder = await pickVideoEncoder({
     codec: opts.codec,
-    quality: opts.quality,
+    quality,
     bitrate: opts.bitrate,
   });
-  const audioBitrate = opts.audioBitrate || '160k';
+  const audioBitrate = opts.audioBitrate || defaultAudioBitrate(quality);
   const workDir = opts.workDir || `${output}.work`;
   fs.mkdirSync(workDir, { recursive: true });
   fs.mkdirSync(path.dirname(output), { recursive: true });
@@ -98,7 +104,10 @@ export async function exportFlat(opts) {
   const partFiles = [];
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
-    const view = resolveSegmentView(seg);
+    const view = resolveSegmentView(seg, undefined, {
+      offset: viewOffset,
+      overrides: presetOverrides,
+    });
     const tag = seg.preset === 'custom' ? 'custom' : seg.preset;
     const lensTag = seg.lens && seg.lens !== 'default' ? `_${seg.lens}` : '';
     const part = path.join(workDir, `seg_${String(i).padStart(3, '0')}_${tag}${lensTag}.mp4`);

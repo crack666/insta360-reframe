@@ -70,10 +70,12 @@ export function emptyProject(id, label = id) {
     updated: new Date().toISOString(),
     takes: [],
     concatFinals: false,
+    /** Copied onto new takes as starting viewOffset (optional). */
+    defaultViewOffset: { yaw: 0, pitch: 0, roll: 0 },
   };
 }
 
-export function emptyTake(id, { raw = [], label } = {}) {
+export function emptyTake(id, { raw = [], label, viewOffset } = {}) {
   return {
     version: 1,
     id: String(id),
@@ -83,6 +85,14 @@ export function emptyTake(id, { raw = [], label } = {}) {
     error: null,
     proxy: null,
     timeline: null,
+    /** Per-take yaw/pitch/roll added to named presets (not custom segments). */
+    viewOffset: {
+      yaw: Number(viewOffset?.yaw) || 0,
+      pitch: Number(viewOffset?.pitch) || 0,
+      roll: Number(viewOffset?.roll) || 0,
+    },
+    /** Per-take absolute named-preset angles (do not touch global presets.json). */
+    presetOverrides: {},
     final: {
       path: null,
       width: 1920,
@@ -185,10 +195,46 @@ export function createProject(id, { label, root = getInstaRoot() } = {}) {
   return project;
 }
 
-export function addTake(projectId, takeId, rawFiles, { label, root = getInstaRoot() } = {}) {
+export function listProjects(root = getInstaRoot()) {
+  const dir = projectsDir(root);
+  if (!fs.existsSync(dir)) return [];
+  const out = [];
+  for (const name of fs.readdirSync(dir)) {
+    const file = path.join(dir, name, 'project.json');
+    if (!fs.existsSync(file)) continue;
+    try {
+      const project = loadJson(file);
+      out.push({
+        id: project.id || name,
+        label: project.label || name,
+        takes: project.takes || [],
+        updated: project.updated || null,
+      });
+    } catch {
+      /* skip broken */
+    }
+  }
+  return out.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
+}
+
+export function listInboxInsv(root = getInstaRoot()) {
+  const dir = inboxDir(root);
+  if (!fs.existsSync(dir)) return [];
+  const files = fs.readdirSync(dir)
+    .filter((f) => /\.insv$/i.test(f))
+    .map((f) => path.join(dir, f));
+  return groupInboxTakes(files).map((g) => ({
+    id: g.id,
+    files: g.files,
+    names: g.files.map((f) => path.basename(f)),
+  }));
+}
+
+export function addTake(projectId, takeId, rawFiles, { label, root = getInstaRoot(), viewOffset } = {}) {
   const { project } = loadProject(projectId, root);
   ensureTakeDirs(projectId, takeId, root);
-  const take = emptyTake(takeId, { raw: rawFiles, label });
+  const offset = viewOffset || project.defaultViewOffset || { yaw: 0, pitch: 0, roll: 0 };
+  const take = emptyTake(takeId, { raw: rawFiles, label, viewOffset: offset });
   const paths = defaultTakePaths(projectId, takeId, root);
   take.final.path = paths.finalMp4;
   saveTake(projectId, take, root);
@@ -197,6 +243,138 @@ export function addTake(projectId, takeId, rawFiles, { label, root = getInstaRoo
     saveProject(project, root);
   }
   return take;
+}
+
+export function setTakeViewOffset(projectId, takeId, offset, { root = getInstaRoot() } = {}) {
+  const { take } = loadTake(projectId, takeId, root);
+  take.viewOffset = {
+    yaw: Number(offset.yaw) || 0,
+    pitch: Number(offset.pitch) || 0,
+    roll: Number(offset.roll) || 0,
+  };
+  saveTake(projectId, take, root);
+  return take;
+}
+
+export function copyTakeViewOffset(projectId, fromTakeId, toTakeId, { root = getInstaRoot() } = {}) {
+  const { take: from } = loadTake(projectId, fromTakeId, root);
+  return setTakeViewOffset(projectId, toTakeId, from.viewOffset || {}, { root });
+}
+
+export function setTakePresetOverride(projectId, takeId, presetName, angles, { root = getInstaRoot() } = {}) {
+  const key = String(presetName || '').toLowerCase();
+  if (!key || key === 'custom') throw new Error('Ungültiger Preset-Name');
+  const { take } = loadTake(projectId, takeId, root);
+  if (!take.presetOverrides || typeof take.presetOverrides !== 'object') take.presetOverrides = {};
+  take.presetOverrides[key] = {
+    yaw: Number(angles.yaw) || 0,
+    pitch: Number(angles.pitch) || 0,
+    roll: Number(angles.roll) || 0,
+    h_fov: Number(angles.h_fov ?? angles.fov) || 120,
+    v_fov: Number(angles.v_fov) || 70,
+    label: angles.label || key,
+  };
+  saveTake(projectId, take, root);
+  return take;
+}
+
+export function clearTakePresetOverride(projectId, takeId, presetName, { root = getInstaRoot() } = {}) {
+  const key = String(presetName || '').toLowerCase();
+  const { take } = loadTake(projectId, takeId, root);
+  if (take.presetOverrides && key in take.presetOverrides) {
+    delete take.presetOverrides[key];
+    saveTake(projectId, take, root);
+  }
+  return take;
+}
+
+const MIN_PROXY_BYTES = 500_000;
+
+/**
+ * Force-clear a stuck stitch/final state (treat any job as dead).
+ * Recovers proxy from disk when present, otherwise back to draft.
+ */
+export function resetTakeJobState(projectId, takeId, { root = getInstaRoot() } = {}) {
+  return reconcileTakeJobState(projectId, takeId, { root, getJob: () => null, force: true });
+}
+
+/**
+ * Remove take from project list. Optionally delete the take folder on disk.
+ */
+export function removeTake(projectId, takeId, { root = getInstaRoot(), deleteFiles = false } = {}) {
+  const { project } = loadProject(projectId, root);
+  const id = String(takeId);
+  project.takes = (project.takes || []).filter((t) => t !== id);
+  saveProject(project, root);
+  if (deleteFiles) {
+    const paths = defaultTakePaths(projectId, id, root);
+    if (fs.existsSync(paths.takeDir)) {
+      fs.rmSync(paths.takeDir, { recursive: true, force: true });
+    }
+  }
+  return project;
+}
+
+/**
+ * After server restart, in-memory jobs are gone but take.status may stay
+ * `stitching_proxy` / `rendering_final`. Recover from disk if possible.
+ * @param {(id: string) => object|null} [getJob] live job lookup; missing = treat as dead
+ * @param {boolean} [force] ignore live job and reset anyway
+ * @returns {{ take: object, changed: boolean, paths: object }}
+ */
+export function reconcileTakeJobState(projectId, takeId, { root = getInstaRoot(), getJob = () => null, force = false } = {}) {
+  const { take, paths } = loadTake(projectId, takeId, root);
+  const busy = take.status === 'stitching_proxy' || take.status === 'rendering_final';
+  if (!busy && !take.activeJobId) {
+    return { take, paths, changed: false };
+  }
+
+  const job = take.activeJobId ? getJob(take.activeJobId) : null;
+  const live = !force && job && (job.status === 'queued' || job.status === 'running');
+  if (live) return { take, paths, changed: false };
+
+  let changed = false;
+  if (take.activeJobId) {
+    take.activeJobId = null;
+    changed = true;
+  }
+
+  // Drop partials from killed MediaSDK runs
+  const partial = `${paths.proxyMp4}.partial`;
+  if (fs.existsSync(partial)) {
+    try { fs.unlinkSync(partial); } catch { /* ignore */ }
+  }
+
+  if (take.status === 'stitching_proxy') {
+    const proxyPath = take.proxy?.path || paths.proxyMp4;
+    let size = 0;
+    try { size = fs.existsSync(proxyPath) ? fs.statSync(proxyPath).size : 0; } catch { size = 0; }
+    if (size >= MIN_PROXY_BYTES) {
+      const [w, h] = String(take.stitch?.proxyOutputSize || '1920x960').split('x').map(Number);
+      take.proxy = {
+        path: proxyPath,
+        width: w || take.proxy?.width || null,
+        height: h || take.proxy?.height || null,
+        outputSize: take.stitch?.proxyOutputSize || take.proxy?.outputSize || null,
+        backend: take.stitch?.lastBackend || take.proxy?.backend || null,
+        recoveredAfterRestart: true,
+      };
+      take.status = 'proxy_ready';
+      take.error = null;
+      changed = true;
+    } else {
+      take.status = 'draft';
+      take.error = 'Proxy-Job unterbrochen (Server-Neustart) — erneut „Proxy erzeugen“.';
+      changed = true;
+    }
+  } else if (take.status === 'rendering_final') {
+    take.status = take.proxy?.path && fs.existsSync(take.proxy.path) ? 'editing' : 'proxy_ready';
+    take.error = 'Final-Job unterbrochen (Server-Neustart).';
+    changed = true;
+  }
+
+  if (changed) saveTake(projectId, take, root);
+  return { take, paths, changed };
 }
 
 /** Heuristic final equirect size from flat width (Phase-0 decision). */

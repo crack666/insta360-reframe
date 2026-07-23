@@ -84,8 +84,25 @@ const el = {
   cmd: document.getElementById('cmd'),
   status: document.getElementById('status'),
   videoName: document.getElementById('videoName'),
+  takeContext: document.getElementById('takeContext'),
   activeSeg: document.getElementById('activeSeg'),
   rates: document.getElementById('rates'),
+  offYaw: document.getElementById('offYaw'),
+  offPitch: document.getElementById('offPitch'),
+  offYawVal: document.getElementById('offYawVal'),
+  offPitchVal: document.getElementById('offPitchVal'),
+  saveOffset: document.getElementById('saveOffset'),
+  offsetFromForward: document.getElementById('offsetFromForward'),
+  resetOffset: document.getElementById('resetOffset'),
+  copyOffsetFrom: document.getElementById('copyOffsetFrom'),
+  copyOffsetBtn: document.getElementById('copyOffsetBtn'),
+  offsetAsDefault: document.getElementById('offsetAsDefault'),
+  offsetStatus: document.getElementById('offsetStatus'),
+  takeAlignBox: document.getElementById('takeAlignBox'),
+  saveTakePreset: document.getElementById('saveTakePreset'),
+  clearTakePreset: document.getElementById('clearTakePreset'),
+  takePresetStatus: document.getElementById('takePresetStatus'),
+
   exportRes: document.getElementById('exportRes'),
   exportCodec: document.getElementById('exportCodec'),
   exportQuality: document.getElementById('exportQuality'),
@@ -130,7 +147,108 @@ const state = {
   followT: -1,
   /** timeline preset last applied to the view */
   followPreset: null,
+  /** Per-take mount offset for named presets without a take override */
+  viewOffset: { yaw: 0, pitch: 0, roll: 0 },
+  /** Per-take absolute named-preset overrides (do not touch presets.json) */
+  presetOverrides: {},
+  projectId: null,
+  takeId: null,
+  siblingTakes: [],
 };
+
+function normYaw(deg) {
+  return ((Number(deg) + 540) % 360) - 180;
+}
+
+function takeOverride(name) {
+  const key = String(name || '').toLowerCase();
+  const o = state.presetOverrides?.[key];
+  return o && typeof o === 'object' ? o : null;
+}
+
+/** Effective named-preset angles for this take (override absolute, else global+offset). */
+function presetWorldAngles(name) {
+  const key = String(name || '').toLowerCase();
+  const p = PRESETS[key] || PRESETS[name];
+  if (!p) return null;
+  const ovr = takeOverride(key);
+  if (ovr) {
+    return {
+      yaw: normYaw(ovr.yaw ?? p.yaw),
+      pitch: Number(ovr.pitch ?? p.pitch) || 0,
+      h_fov: Number(ovr.h_fov ?? p.h_fov) || 120,
+      takeLocal: true,
+    };
+  }
+  return {
+    yaw: normYaw(p.yaw + (state.viewOffset.yaw || 0)),
+    pitch: (p.pitch || 0) + (state.viewOffset.pitch || 0),
+    h_fov: p.h_fov,
+    takeLocal: false,
+  };
+}
+
+function syncTakePresetUi() {
+  const hasTake = !!(state.projectId && state.takeId);
+  if (el.saveTakePreset) el.saveTakePreset.disabled = !hasTake;
+  if (el.clearTakePreset) el.clearTakePreset.disabled = !hasTake;
+  const name = el.saveTarget?.value || state.preset;
+  const ovr = name && name !== 'custom' ? takeOverride(name) : null;
+  if (el.takePresetStatus) {
+    if (!hasTake) {
+      el.takePresetStatus.textContent = 'Kein Take — nur globales Speichern möglich.';
+    } else if (ovr) {
+      el.takePresetStatus.textContent = `Take ${state.takeId}: „${name}“ lokal yaw=${Math.round(ovr.yaw)}° pitch=${Math.round(ovr.pitch)}° (andere Takes unverändert)`;
+    } else {
+      el.takePresetStatus.textContent = `Take ${state.takeId}: „${name || '…'}“ nutzt global + Mount-Offset — „Nur für diesen Take“ speichert lokal.`;
+    }
+  }
+  // Mark preset buttons that have take overrides
+  if (el.presets) {
+    for (const btn of el.presets.querySelectorAll('button[data-preset]')) {
+      const n = btn.dataset.preset;
+      const local = !!takeOverride(n);
+      btn.classList.toggle('take-local', local);
+      const base = PRESETS[n];
+      const w = presetWorldAngles(n);
+      btn.title = local
+        ? `${n} (Take-lokal): yaw=${Math.round(w.yaw)} pitch=${Math.round(w.pitch)}`
+        : `${n}: yaw=${base?.yaw} pitch=${base?.pitch} · Klick=ansehen, Doppelklick=Cut`;
+    }
+  }
+}
+
+function syncOffsetUi() {
+  if (!el.offYaw) return;
+  el.offYaw.value = String(Math.round(state.viewOffset.yaw || 0));
+  el.offPitch.value = String(Math.round(state.viewOffset.pitch || 0));
+  if (el.offYawVal) el.offYawVal.textContent = el.offYaw.value;
+  if (el.offPitchVal) el.offPitchVal.textContent = el.offPitch.value;
+  const hasTake = !!(state.projectId && state.takeId);
+  for (const id of ['offYaw', 'offPitch', 'saveOffset', 'offsetFromForward', 'resetOffset', 'copyOffsetBtn', 'copyOffsetFrom', 'offsetAsDefault']) {
+    if (el[id]) el[id].disabled = !hasTake;
+  }
+  if (el.copyOffsetFrom) {
+    el.copyOffsetFrom.innerHTML = '';
+    for (const tid of state.siblingTakes || []) {
+      const o = document.createElement('option');
+      o.value = tid;
+      o.textContent = `Take ${tid}`;
+      el.copyOffsetFrom.appendChild(o);
+    }
+    if (!state.siblingTakes?.length) {
+      const o = document.createElement('option');
+      o.value = '';
+      o.textContent = '(keine anderen Takes)';
+      el.copyOffsetFrom.appendChild(o);
+    }
+  }
+  if (el.offsetStatus) {
+    el.offsetStatus.textContent = hasTake
+      ? `Take ${state.takeId}: Offset yaw=${Math.round(state.viewOffset.yaw)}° pitch=${Math.round(state.viewOffset.pitch)}°`
+      : 'Kein Take-Kontext — Offset nur mit Projekt/Take.';
+  }
+}
 
 // —— Timeline helpers (mirror server; supports custom@yaw,pitch,fov) ——
 function cloneSeg(s) {
@@ -401,8 +519,8 @@ const video = document.createElement('video');
 video.crossOrigin = 'anonymous';
 video.playsInline = true;
 video.preload = 'auto';
-video.src = '/media';
 video.muted = true;
+// src set after session/take is activated (see boot below)
 
 const texture = new THREE.VideoTexture(video);
 texture.colorSpace = THREE.SRGBColorSpace;
@@ -451,13 +569,13 @@ function hfovToVfov(hfovDeg, aspect) {
 
 function applyPeekCameras() {
   for (const pv of peekViews) {
-    const p = PRESETS[pv.name];
-    if (!p) continue;
+    const w = presetWorldAngles(pv.name);
+    if (!w) continue;
     pv.camera.rotation.order = 'YXZ';
-    pv.camera.rotation.y = deg(-p.yaw);
-    pv.camera.rotation.x = deg(p.pitch);
+    pv.camera.rotation.y = deg(-w.yaw);
+    pv.camera.rotation.x = deg(w.pitch);
     // h_fov is horizontal; Three.js wants vertical
-    pv.camera.fov = hfovToVfov(p.h_fov, pv.camera.aspect || 16 / 9);
+    pv.camera.fov = hfovToVfov(w.h_fov, pv.camera.aspect || 16 / 9);
     pv.camera.updateProjectionMatrix();
     pv.card.classList.toggle('active', state.preset === pv.name);
   }
@@ -550,11 +668,11 @@ function applySegmentLook(seg) {
     return;
   }
   if (PRESETS[seg.preset]) {
-    const p = PRESETS[seg.preset];
+    const w = presetWorldAngles(seg.preset);
     state.preset = seg.preset;
-    state.yaw = p.yaw;
-    state.pitch = p.pitch;
-    state.fov = resolveLensFov(p.h_fov, lensId);
+    state.yaw = w.yaw;
+    state.pitch = w.pitch;
+    state.fov = resolveLensFov(w.h_fov, lensId);
     if (el.saveTarget) el.saveTarget.value = seg.preset;
     applyLook();
   }
@@ -612,7 +730,7 @@ function doCutCustom() {
 
 /** Current UI look as a timeline patch (named preset if it still matches, else custom). */
 function viewPatchFromUi() {
-  const named = state.preset !== 'custom' ? PRESETS[state.preset] : null;
+  const named = state.preset !== 'custom' ? presetWorldAngles(state.preset) : null;
   if (
     named
     && Math.abs(named.yaw - state.yaw) < 1.5
@@ -639,12 +757,12 @@ function updateCurrentSegment() {
 }
 
 function setPreset(name) {
-  const p = PRESETS[name];
-  if (!p) return;
+  const w = presetWorldAngles(name);
+  if (!w) return;
   state.preset = name;
-  state.yaw = p.yaw;
-  state.pitch = p.pitch;
-  state.fov = p.h_fov;
+  state.yaw = w.yaw;
+  state.pitch = w.pitch;
+  state.fov = w.h_fov;
   if (el.saveTarget) el.saveTarget.value = name;
   applyLook();
 }
@@ -659,8 +777,9 @@ function highlightPreset() {
 function nearestPresetName() {
   let best = null;
   let bestDist = Infinity;
-  for (const [name, p] of Object.entries(PRESETS)) {
-    const d = Math.abs(p.yaw - state.yaw) + Math.abs(p.pitch - state.pitch) * 0.5;
+  for (const name of Object.keys(PRESETS)) {
+    const w = presetWorldAngles(name);
+    const d = Math.abs(w.yaw - state.yaw) + Math.abs(w.pitch - state.pitch) * 0.5;
     if (d < bestDist) { bestDist = d; best = name; }
   }
   return bestDist < 15 ? best : 'custom';
@@ -946,6 +1065,7 @@ function rebuildPresetUi() {
   if (PRESETS[state.preset]) el.saveTarget.value = state.preset;
   highlightPreset();
   applyPeekCameras();
+  syncTakePresetUi();
 }
 
 async function loadPresetsFromServer() {
@@ -1050,9 +1170,11 @@ el.timeline.addEventListener('change', () => {
 el.savePreset.addEventListener('click', async () => {
   const name = el.saveTarget.value;
   if (!name) return;
+  // Global base: strip mount-offset only when view is not a take-local override
+  const ovr = takeOverride(name);
   const body = {
-    yaw: Math.round(state.yaw),
-    pitch: Math.round(state.pitch),
+    yaw: Math.round(ovr ? state.yaw : normYaw(state.yaw - (state.viewOffset.yaw || 0))),
+    pitch: Math.round(ovr ? state.pitch : (state.pitch - (state.viewOffset.pitch || 0))),
     h_fov: Math.round(state.fov),
     v_fov: PRESETS[name]?.v_fov ?? 70,
     roll: 0,
@@ -1072,12 +1194,181 @@ el.savePreset.addEventListener('click', async () => {
   state.preset = name;
   rebuildPresetUi();
   applyLook();
-  el.status.textContent = `Gespeichert ${name}: yaw=${body.yaw} pitch=${body.pitch}`;
+  el.status.textContent = `Global gespeichert ${name}: yaw=${body.yaw} pitch=${body.pitch} (alle Takes)`;
+});
+
+el.saveTakePreset?.addEventListener('click', async () => {
+  const name = el.saveTarget?.value;
+  if (!name || !state.projectId || !state.takeId) {
+    el.status.textContent = 'Take + Ziel-Preset nötig';
+    return;
+  }
+  const body = {
+    yaw: Math.round(state.yaw),
+    pitch: Math.round(state.pitch),
+    h_fov: Math.round(state.fov),
+    v_fov: PRESETS[name]?.v_fov ?? 70,
+    roll: 0,
+    label: PRESETS[name]?.label || name,
+  };
+  try {
+    const r = await fetch(
+      `/api/projects/${encodeURIComponent(state.projectId)}/takes/${encodeURIComponent(state.takeId)}/presets/${encodeURIComponent(name)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+    const doc = await r.json();
+    if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
+    state.presetOverrides = doc.presetOverrides || {};
+    state.preset = name;
+    rebuildPresetUi();
+    setPreset(name);
+    el.status.textContent = `Take ${state.takeId}: „${name}“ lokal yaw=${body.yaw}° pitch=${body.pitch}°`;
+  } catch (err) {
+    el.status.textContent = `Take-Preset fehlgeschlagen: ${err.message || err}`;
+  }
+});
+
+el.clearTakePreset?.addEventListener('click', async () => {
+  const name = el.saveTarget?.value;
+  if (!name || !state.projectId || !state.takeId) return;
+  try {
+    const r = await fetch(
+      `/api/projects/${encodeURIComponent(state.projectId)}/takes/${encodeURIComponent(state.takeId)}/presets/${encodeURIComponent(name)}`,
+      { method: 'DELETE' },
+    );
+    const doc = await r.json();
+    if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
+    state.presetOverrides = doc.presetOverrides || {};
+    rebuildPresetUi();
+    setPreset(name);
+    el.status.textContent = `Take-Override „${name}“ entfernt → wieder global + Mount-Offset`;
+  } catch (err) {
+    el.status.textContent = err.message || String(err);
+  }
+});
+
+el.saveTarget?.addEventListener('change', () => {
+  syncTakePresetUi();
 });
 
 el.reloadPresets.addEventListener('click', async () => {
   await loadPresetsFromServer();
   el.status.textContent = 'Presets neu geladen';
+});
+
+async function persistTakeOffset({ announce = true } = {}) {
+  if (!state.projectId || !state.takeId) {
+    el.status.textContent = 'Kein Take — Offset nicht speicherbar';
+    return;
+  }
+  const body = {
+    viewOffset: {
+      yaw: Number(el.offYaw.value) || 0,
+      pitch: Number(el.offPitch.value) || 0,
+      roll: 0,
+    },
+    setAsProjectDefault: !!(el.offsetAsDefault && el.offsetAsDefault.checked),
+  };
+  const r = await fetch(
+    `/api/projects/${encodeURIComponent(state.projectId)}/takes/${encodeURIComponent(state.takeId)}/offset`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+  const doc = await r.json();
+  if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
+  state.viewOffset = doc.viewOffset || body.viewOffset;
+  syncOffsetUi();
+  syncViewToPlayhead({ force: true });
+  if (announce) {
+    el.status.textContent = `Take-Offset gespeichert: yaw=${Math.round(state.viewOffset.yaw)}° pitch=${Math.round(state.viewOffset.pitch)}°`;
+  }
+}
+
+function readOffsetSlidersIntoState() {
+  state.viewOffset = {
+    yaw: Number(el.offYaw?.value) || 0,
+    pitch: Number(el.offPitch?.value) || 0,
+    roll: 0,
+  };
+  if (el.offYawVal) el.offYawVal.textContent = String(Math.round(state.viewOffset.yaw));
+  if (el.offPitchVal) el.offPitchVal.textContent = String(Math.round(state.viewOffset.pitch));
+}
+
+el.offYaw?.addEventListener('input', () => {
+  readOffsetSlidersIntoState();
+  syncViewToPlayhead({ force: true });
+});
+el.offPitch?.addEventListener('input', () => {
+  readOffsetSlidersIntoState();
+  syncViewToPlayhead({ force: true });
+});
+el.saveOffset?.addEventListener('click', async () => {
+  try {
+    readOffsetSlidersIntoState();
+    await persistTakeOffset();
+  } catch (err) {
+    el.status.textContent = `Offset speichern fehlgeschlagen: ${err.message || err}`;
+  }
+});
+el.resetOffset?.addEventListener('click', async () => {
+  state.viewOffset = { yaw: 0, pitch: 0, roll: 0 };
+  syncOffsetUi();
+  syncViewToPlayhead({ force: true });
+  try {
+    await persistTakeOffset();
+  } catch (err) {
+    el.status.textContent = err.message || String(err);
+  }
+});
+el.offsetFromForward?.addEventListener('click', async () => {
+  const base = PRESETS.forward;
+  if (!base) {
+    el.status.textContent = 'Kein forward-Preset';
+    return;
+  }
+  // Current view should become "forward" after offset
+  state.viewOffset = {
+    yaw: Math.round(normYaw(state.yaw - base.yaw)),
+    pitch: Math.round(state.pitch - base.pitch),
+    roll: 0,
+  };
+  syncOffsetUi();
+  syncViewToPlayhead({ force: true });
+  try {
+    await persistTakeOffset();
+    el.status.textContent = 'Offset so gesetzt, dass aktueller Blick = forward';
+  } catch (err) {
+    el.status.textContent = err.message || String(err);
+  }
+});
+el.copyOffsetBtn?.addEventListener('click', async () => {
+  const from = el.copyOffsetFrom?.value;
+  if (!from || !state.projectId || !state.takeId) return;
+  try {
+    const r = await fetch(
+      `/api/projects/${encodeURIComponent(state.projectId)}/takes/${encodeURIComponent(state.takeId)}/copy-offset`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromTake: from }),
+      },
+    );
+    const doc = await r.json();
+    if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
+    state.viewOffset = doc.viewOffset || { yaw: 0, pitch: 0, roll: 0 };
+    syncOffsetUi();
+    syncViewToPlayhead({ force: true });
+    el.status.textContent = `Offset von Take ${from} übernommen`;
+  } catch (err) {
+    el.status.textContent = `Übernehmen fehlgeschlagen: ${err.message || err}`;
+  }
 });
 
 el.copyTimeline.addEventListener('click', async () => {
@@ -1186,7 +1477,37 @@ const exportOpts = {
   codec: 'h264',
   quality: 'medium',
 };
+const AUDIO_BY_Q = { draft: '96k', medium: '128k', high: '160k' };
 let exportPollTimer = null;
+
+/** Match server suggestVideoBitrate — flat delivery targets. */
+function suggestExportBitrate(width, height, codec, quality) {
+  const base = codec === 'hevc'
+    ? { draft: 3.5, medium: 7, high: 12 }
+    : { draft: 5, medium: 10, high: 16 };
+  const mbps = base[quality] ?? base.medium;
+  const scale = Math.max(0.25, (width * height) / (1920 * 1080));
+  const scaled = mbps * scale ** 0.75;
+  const nice = scaled < 4 ? Math.round(scaled * 2) / 2 : Math.round(scaled);
+  return `${nice}M`;
+}
+
+function syncExportBitrateHint() {
+  const sug = suggestExportBitrate(
+    exportOpts.width,
+    exportOpts.height,
+    exportOpts.codec,
+    exportOpts.quality,
+  );
+  const audio = AUDIO_BY_Q[exportOpts.quality] || AUDIO_BY_Q.medium;
+  if (el.exportBitrate) {
+    el.exportBitrate.placeholder = `leer = CQ/CRF · Orientierung ${sug}`;
+  }
+  const hint = document.getElementById('exportBitrateHint');
+  if (hint) {
+    hint.textContent = `Orientierung ${exportOpts.width}×${exportOpts.height} ${exportOpts.codec.toUpperCase()} ${exportOpts.quality}: ${sug} · Audio ${audio} AAC`;
+  }
+}
 
 function bindToggleGroup(container, attr, onPick) {
   if (!container) return;
@@ -1202,13 +1523,17 @@ function bindToggleGroup(container, attr, onPick) {
 bindToggleGroup(el.exportRes, 'data-w', (btn) => {
   exportOpts.width = Number(btn.dataset.w);
   exportOpts.height = Number(btn.dataset.h);
+  syncExportBitrateHint();
 });
 bindToggleGroup(el.exportCodec, 'data-codec', (btn) => {
   exportOpts.codec = btn.dataset.codec;
+  syncExportBitrateHint();
 });
 bindToggleGroup(el.exportQuality, 'data-q', (btn) => {
   exportOpts.quality = btn.dataset.q;
+  syncExportBitrateHint();
 });
+syncExportBitrateHint();
 
 async function loadExportOptions() {
   try {
@@ -1432,27 +1757,72 @@ video.addEventListener('error', () => {
 
 buildPeek();
 
-fetch('/api/info')
+async function ensureSessionFromQuery() {
+  const params = new URLSearchParams(window.location.search);
+  const project = params.get('project');
+  const take = params.get('take');
+  if (!project || !take) return;
+  const r = await fetch(
+    `/api/projects/${encodeURIComponent(project)}/takes/${encodeURIComponent(take)}/open`,
+    { method: 'POST' },
+  );
+  const doc = await r.json();
+  if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
+}
+
+ensureSessionFromQuery()
+  .catch(() => {})
+  .then(() => fetch('/api/info'))
   .then((r) => r.json())
   .then((info) => {
+    if (!info.video) {
+      el.status.textContent = 'Kein Video aktiv — bitte im Wizard einen Take öffnen.';
+      el.videoName.textContent = 'Kein Video';
+      return null;
+    }
     if (info.name) el.videoName.textContent = info.name;
     if (info.presetsPath) el.presetPath.textContent = `Datei: ${info.presetsPath}`;
     if (info.timelinePath) {
       timelineSavePath = info.timelinePath;
       updateTimelinePathUi();
     }
+    state.projectId = info.projectId || null;
+    state.takeId = info.takeId || null;
+    state.siblingTakes = info.siblingTakes || [];
+    state.viewOffset = info.viewOffset || { yaw: 0, pitch: 0, roll: 0 };
+    state.presetOverrides = info.presetOverrides || {};
+    syncOffsetUi();
+    syncTakePresetUi();
+    const back = document.getElementById('backHome');
+    if (back) {
+      if (info.projectId) {
+        back.href = `/?project=${encodeURIComponent(info.projectId)}`;
+        back.textContent = `← ${info.projectId}`;
+      } else {
+        back.href = '/';
+        back.textContent = '← Projekte';
+      }
+    }
+    if (el.takeContext && info.projectId && info.takeId) {
+      el.takeContext.hidden = false;
+      el.takeContext.textContent = `Projekt ${info.projectId} · Take ${info.takeId}`;
+    }
+    video.src = `/media?t=${Date.now()}`;
+    return info;
   })
-  .catch(() => {});
-
-loadPresetsFromServer()
-  .then(() => loadTimelineFromServer({ announce: false }))
-  .then(() => {
-    resize();
-    applyLook();
-    tick();
+  .then((info) => {
+    if (!info?.video) return;
+    return loadPresetsFromServer()
+      .then(() => loadTimelineFromServer({ announce: false }))
+      .then(() => {
+        resize();
+        syncViewToPlayhead({ force: true });
+        applyLook();
+        tick();
+      });
   })
   .catch((err) => {
-    el.status.textContent = `Preset load failed: ${err.message}`;
+    el.status.textContent = `Start fehlgeschlagen: ${err.message}`;
     resize();
     applyLook();
     tick();

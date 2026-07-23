@@ -22,7 +22,12 @@ import {
   groupInboxTakes,
   takeIdFromInsv,
 } from './project.mjs';
-import { stitchTake, setProxyFile } from './stitch.mjs';
+import {
+  stitchTake,
+  setProxyFile,
+  resolveStitchBackend,
+  resolveWindowsMediaSdk,
+} from './stitch.mjs';
 import { renderFinal, importTimeline } from './final.mjs';
 
 function usage() {
@@ -33,8 +38,9 @@ insta360-reframe project CLI
   add-take <project> --insv <file> [--insv <file2>] [--id 011]
   add-take-from-inbox <project> --take 011
   list-inbox
-  stitch-proxy <project> <take>
-  stitch-final-master <project> <take>   (only master equirect, keep file)
+  stitch-proxy <project> <take> [--backend windows|docker]
+  stitch-final-master <project> <take> [--backend windows|docker]
+  stitch-backend                         show resolved stitch backend / SDK paths
   set-proxy <project> <take> --file <equirect.mp4>
   import-timeline <project> <take> --from <timeline.json|txt>
   final <project> <take> [--use-proxy-as-master] [--keep-master]
@@ -59,6 +65,7 @@ function parseArgs(argv) {
     else if (x === '--file' || x === '--from') flags.file = a[++i];
     else if (x === '--use-proxy-as-master') flags.useProxyAsMaster = true;
     else if (x === '--keep-master') flags.keepMaster = true;
+    else if (x === '--backend') flags.backend = a[++i];
     else if (x === '-h' || x === '--help') flags.help = true;
     else if (!x.startsWith('-')) positional.push(x);
   }
@@ -115,19 +122,39 @@ async function main() {
     return;
   }
 
+  if (cmd === 'stitch-backend') {
+    const backend = resolveStitchBackend({ backend: flags.backend });
+    const sdk = resolveWindowsMediaSdk();
+    console.log(`backend:  ${backend}`);
+    console.log(`root:     ${getInstaRoot()}`);
+    console.log(`win sdk:  ${sdk.sdkRoot}`);
+    console.log(`win exe:  ${sdk.exe} (${sdk.ok ? 'ok' : 'missing'})`);
+    console.log(`win models: ${sdk.models}`);
+    console.log(`env INSTA360_STITCH_BACKEND=${process.env.INSTA360_STITCH_BACKEND || '(auto)'}`);
+    return;
+  }
+
   if (cmd === 'stitch-proxy') {
     const [projectId, takeId] = positional;
     if (!projectId || !takeId) throw new Error('stitch-proxy <project> <take>');
-    const r = await stitchTake(projectId, takeId, { profile: 'proxy', onLog: log });
-    console.log(`proxy ready: ${r.outputHost}`);
+    const r = await stitchTake(projectId, takeId, {
+      profile: 'proxy',
+      backend: flags.backend,
+      onLog: log,
+    });
+    console.log(`proxy ready: ${r.outputHost} (backend=${r.backend})`);
     return;
   }
 
   if (cmd === 'stitch-final-master') {
     const [projectId, takeId] = positional;
     if (!projectId || !takeId) throw new Error('stitch-final-master <project> <take>');
-    const r = await stitchTake(projectId, takeId, { profile: 'final', onLog: log });
-    console.log(`master ready: ${r.outputHost}`);
+    const r = await stitchTake(projectId, takeId, {
+      profile: 'final',
+      backend: flags.backend,
+      onLog: log,
+    });
+    console.log(`master ready: ${r.outputHost} (backend=${r.backend})`);
     return;
   }
 

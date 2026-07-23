@@ -64,6 +64,8 @@ export async function renderFinal(projectId, takeId, {
       height,
       codec: take.final?.codec || 'h264',
       quality: take.final?.quality || 'high',
+      viewOffset: take.viewOffset || null,
+      presetOverrides: take.presetOverrides || null,
       workDir: path.join(paths.workDir, 'flat.work'),
       onProgress,
     });

@@ -8,7 +8,8 @@
     "insta360-reframe": "./src/cli.mjs"
   },
   "scripts": {
-    "preview": "node src/preview-server.mjs",
+    "preview": "node src/preview-server.mjs --no-open",
+    "preview:open": "node src/preview-server.mjs",
     "reframe": "node src/cli.mjs",
     "project": "node src/project-cli.mjs"
   },

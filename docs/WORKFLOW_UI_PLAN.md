@@ -187,14 +187,14 @@ Legende: `[ ]` offen · `[~]` teilweise · `[x]` erledigt
 
 **Ziel:** User braucht keine CLI für Schritte ①–③.
 
-- [ ] Routes/Pages: Start → Neues Projekt → Takes hinzufügen
-- [ ] Inbox-Browser (Server listet `inbox/**/*.insv`)
-- [ ] Auto-Pair `00`/`10`; manuelle Reihenfolge (↑↓)
-- [ ] Button „Proxy erzeugen“ + Progress (Poll `/api/jobs/:id`)
-- [ ] Bei `proxy_ready`: Button „Im Editor öffnen“
-- [ ] Fehlerzustände verständlich (GPU/Docker down, fehlende Paar-Datei)
+- [x] Routes/Pages: `/` Wizard · `/edit` Editor
+- [x] Inbox-Browser (`/api/inbox`)
+- [x] Auto-Pair `00`/`10`; Reihenfolge ↑↓
+- [x] „Proxy erzeugen“ + Job-Poll (`/api/jobs/:id`)
+- [x] Bei Proxy: „Im Editor öffnen“
+- [x] Fehler über Job-Status / Statuszeile (Docker-Fehler erscheinen im Log)
 
-**Exit:** Komplett untrainierter Ablauf: Dateien wählen → warten → Editor.
+**Exit:** Dateien wählen → Proxy → Editor (ohne CLI).
 
 ---
 
@@ -202,14 +202,14 @@ Legende: `[ ]` offen · `[~]` teilweise · `[x]` erledigt
 
 **Ziel:** Preview ist kein „loses Video“, sondern Take-Kontext.
 
-- [ ] Preview-Server startet mit `--project` / Take-ID **oder** UI navigiert zu `/edit?take=`
-- [ ] Video-Quelle = Proxy-Pfad aus Manifest
-- [ ] Timeline lesen/schreiben über Take-Pfade (nicht nur `<video>.timeline.json`)
-- [ ] Header: Projektname · Take · Status · „Zurück zur Übersicht“
-- [ ] Bestehende Export-Panel-Defaults aus `take.json.final` vorbefüllen
-- [ ] Optional: „Nur Timeline speichern“ vs. „Final rendern“ klar trennen (Final = Wizard-Schritt oder großer Button mit Confirm)
+- [x] `/edit?project=&take=` + `--project/--take` CLI
+- [x] Video = Proxy aus Manifest
+- [x] Timeline auch unter `takes/…/timeline/`
+- [x] Header: Projekt/Take + Link zurück
+- [x] Export-Default-Pfad = `takes/…/final/flat.mp4`
+- [ ] Final-Pipeline-Button (Master-Stitch) vs. Flat-Export klar trennen → Phase 4
 
-**Exit:** Editor fühlt sich wie Schritt ④ derselben App an.
+**Exit (teilweise):** Editor ist Schritt ④; Full-Final-UX folgt Phase 4.
 
 ---
 
@@ -271,7 +271,45 @@ Legende: `[ ]` offen · `[~]` teilweise · `[x]` erledigt
 
 ---
 
+## 6a. Investigation: GPU-Stitch unter Docker Desktop / WSL2 (2026-07-23)
+
+**Symptom:** MediaSDK log `vulkan error -9 ERROR_INCOMPATIBLE_DRIVER`; CPU ~hoch, GPU idle; Proxy wächst trotzdem.
+
+**Was funktioniert im Container**
+- `libcuda` + `libnvcuvid` gemountet → **HEVC CUDA-Decode** (`hevc_cuvid`)
+- `nvidia-smi` sichtbar
+
+**Was fehlt (Diag-Container, `NVIDIA_DRIVER_CAPABILITIES=all`)**
+- keine `libGLX_nvidia` / `libEGL_nvidia` / `libnvidia-glcore`
+- kein `nvidia_icd.json`, leeres `/etc/vulkan/icd.d`
+- kein `/usr/lib/wsl/lib` im Container; auf WSL-Host liegen unter `/usr/lib/wsl/lib` nur CUDA/encode/cuvid — **kein** NVIDIA-Vulkan/GL
+
+**MediaSDK-Folgen (auch im erfolgreichen 011-Export-Log)**
+- `opengl vendor is: Mesa, not NVIDIA, cuda texture reader disabled`
+- `CUDA context enabled: 0` (Stitch-Pfad)
+- Vulkan init → fail → `vulkan: 0` → **CPU-Stitch**
+
+**Ursache:** Docker Desktop + WSL2 liefern den NVIDIA-**Compute/Video**-Stack, nicht den proprietären **GL/Vulkan**-Stack, den MediaSDK für GPU-Stitch braucht. Kein simpler Flag-Bug in unserem `docker run`.
+
+**Optionen (priorisiert)**
+1. **Windows-MediaSDK native** ✅ entpackt + verdrahtet (`sdk/windows/MediaSDK-root`, Backend-Switch)  
+   - Smoke 2026-07-23: Vulkan sieht **RTX 5090**, Frame-Export ok (`work/win-sdk-smoke/frames/`)  
+2. Bare-metal Linux + NVIDIA-Treiber — weiter Fallback  
+3. WSL/Docker-Vulkan-Hacks — nicht nötig wenn Native Default  
+4. Docker bleibt als `INSTA360_STITCH_BACKEND=docker` (CPU-Stitch)
+
+**Default auf diesem Host:** `windows` wenn EXE vorhanden, sonst `docker`.
+
+---
+
 ## 6b. Backlog (später, kein Core)
+
+### Take-Ausrichtung / viewOffset ✅ (2026-07-23)
+
+- Globale `presets.json` bleiben Mount-Basis.
+- Pro Take: `viewOffset` (yaw/pitch) dreht alle named Presets ohne Override (Mount).
+- Pro Take: `presetOverrides` = absolute Winkel einzelner named Presets (z.B. nur Selfie) ohne `presets.json`.
+- UI: „Nur für diesen Take“ vs „Global speichern“; Mount-Offset separat / eingeklappt.
 
 ### Cut-Transitions (ohne Micro-Segmente)
 
@@ -320,7 +358,8 @@ Legende: `[ ]` offen · `[~]` teilweise · `[x]` erledigt
 - [x] Phase 1 Runner (`stitch.mjs`, `final.mjs`, `project-cli.mjs`) — UI folgt Phase 2
 - [x] Phase 1 Smoke: `final --use-proxy-as-master` auf Take 011 → `projects/smoke-011/…/final/flat.mp4`
 - [ ] Phase 1 optional: echter `stitch-proxy` / `final` (voller MediaSDK-Lauf)
-- [ ] Phase 2+ UI
+- [x] Phase 2 Wizard UI + Phase 3 Editor-Bindung (Basis)
+- [ ] Phase 4 Final-UX
 
 ---
 

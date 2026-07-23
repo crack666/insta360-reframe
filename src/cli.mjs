@@ -27,7 +27,7 @@ OPTIONS:
   --codec           h264 | hevc  (default h264; hevc = H.265 when available)
   --quality         draft | medium | high  (CQ/CRF mode, default medium)
   --bitrate         e.g. 8M / 12M — if set, overrides quality CQ/CRF
-  --audio-bitrate   e.g. 160k (default)
+  --audio-bitrate   AAC; default by quality: draft 96k / medium 128k / high 160k
   --yaw/--pitch/--fov   Override (single-preset mode only via timeline empty)
   --work-dir        Temp segment dir (default: <output>.work)
   --list-presets    Print presets and exit
@@ -52,7 +52,7 @@ function parseArgs(argv) {
     codec: 'h264',
     quality: 'medium',
     bitrate: null,
-    audioBitrate: '160k',
+    audioBitrate: null,
     workDir: null,
     listPresets: false,
     listEncoders: false,

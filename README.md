@@ -22,8 +22,15 @@ Ziel: Chest-Mount / Action-Clips ohne Insta360 Studio reframen — Preview im Br
 ## Preview / Editor
 
 ```bash
-npm run preview -- --video "D:/path/to/equirect.mp4"
-# → http://127.0.0.1:8787/
+# Wizard (Projekte / Inbox / Proxy) + Editor
+npm run preview:open
+# → http://127.0.0.1:8787/        Wizard
+# → http://127.0.0.1:8787/edit   Editor (nach Take-Öffnung)
+
+# Direkt ein Equirect (ohne Wizard-Session)
+node src/preview-server.mjs --video "D:/path/to/equirect.mp4"
+# oder Take:
+node src/preview-server.mjs --project smoke-011 --take 011
 ```
 
 ### Workflow
@@ -86,8 +93,8 @@ Ohne `-t` / `--timeline-file` lädt die CLI automatisch `<input>.timeline.json` 
 | `--width` / `--height` | 1920×1080 | Flat-Auflösung |
 | `--codec` | `h264` | `h264` oder `hevc` (H.265) |
 | `--quality` | `medium` | `draft` / `medium` / `high` (CQ/CRF) |
-| `--bitrate` | — | z.B. `8M` — überschreibt Qualität |
-| `--audio-bitrate` | `160k` | AAC |
+| `--bitrate` | — | z.B. `8M` / `10M` — überschreibt Qualität; Orientierung 720p≈5M, 1080p≈10M, 1440p≈16M (H.264 medium) |
+| `--audio-bitrate` | nach Qualität | AAC: draft `96k` / medium `128k` / high `160k` (X5-Proxy ≈128k, Roh ≈190k) |
 
 Encoder-Wahl: NVENC wenn verfügbar (`h264_nvenc` / `hevc_nvenc`), sonst `libx264` / `libx265`.
 
@@ -199,7 +206,9 @@ Proxy-Stitch → Editor → Final (Temp-Master) als Wizard in derselben Web-App:
 npm run project -- list-inbox
 npm run project -- create-project my-run
 npm run project -- add-take-from-inbox my-run --take 011
-npm run project -- stitch-proxy my-run 011          # MediaSDK Docker (lang)
+npm run project -- stitch-backend                   # windows vs docker
+npm run project -- stitch-proxy my-run 011          # Default: Windows MediaSDK (GPU)
+npm run project -- stitch-proxy my-run 011 --backend docker   # optional CPU/Docker
 # Dev-Smoke ohne Full-Stitch:
 npm run project -- set-proxy my-run 011 --file path/to/equirect.mp4
 npm run project -- import-timeline my-run 011 --from path/to.timeline.json
@@ -207,6 +216,9 @@ npm run project -- final my-run 011 --use-proxy-as-master
 # Echter Final (Master-Stitch temp → Flat → Master löschen):
 npm run project -- final my-run 011
 ```
+
+Windows-SDK (portable, kein PATH): `D:/ai/ai-stack/data/insta360/sdk/windows/` — siehe README dort.  
+Env: `INSTA360_STITCH_BACKEND=windows|docker`.
 
 ## Not in scope
 
