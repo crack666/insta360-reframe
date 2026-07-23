@@ -39,8 +39,12 @@ import {
   reconcileTakeJobState,
   resetTakeJobState,
   removeTake,
+  getProjectExportSettings,
+  setProjectExportSettings,
+  projectPaths,
 } from './project.mjs';
 import { stitchTake, setProxyFile } from './stitch.mjs';
+import { renderProjectFinals } from './final.mjs';
 import {
   createJob,
   getJob,
@@ -373,7 +377,101 @@ const server = http.createServer(async (req, res) => {
           takes.push({ id: tid, status: 'error', error: 'take.json fehlt' });
         }
       }
-      json(res, 200, { ok: true, project, takes });
+      json(res, 200, {
+        ok: true,
+        project: {
+          ...project,
+          export: getProjectExportSettings(project),
+          concatFinals: project.concatFinals !== false,
+        },
+        takes,
+        sessionPath: projectPaths(projectId).sessionMp4,
+        hasSession: !!(project.session?.path && fs.existsSync(project.session.path))
+          || fs.existsSync(projectPaths(projectId).sessionMp4),
+      });
+      return;
+    }
+
+    const exportSettingsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/export-settings$/);
+    if (exportSettingsMatch && method === 'GET') {
+      const projectId = decodeURIComponent(exportSettingsMatch[1]);
+      const { project } = loadProject(projectId);
+      const pp = projectPaths(projectId);
+      json(res, 200, {
+        ok: true,
+        export: getProjectExportSettings(project),
+        concatFinals: project.concatFinals !== false,
+        sessionPath: pp.sessionMp4,
+        hasSession: fs.existsSync(pp.sessionMp4),
+      });
+      return;
+    }
+    if (exportSettingsMatch && method === 'PUT') {
+      const projectId = decodeURIComponent(exportSettingsMatch[1]);
+      const body = JSON.parse(await readBody(req) || '{}');
+      const project = setProjectExportSettings(projectId, body.export || body, {
+        concatFinals: body.concatFinals,
+      });
+      json(res, 200, {
+        ok: true,
+        export: getProjectExportSettings(project),
+        concatFinals: project.concatFinals !== false,
+        project,
+      });
+      return;
+    }
+
+    const exportAllMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/export-all$/);
+    if (exportAllMatch && method === 'POST') {
+      const projectId = decodeURIComponent(exportAllMatch[1]);
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        if (raw.trim()) body = JSON.parse(raw);
+      } catch {
+        body = {};
+      }
+      // Persist settings if provided with the export request
+      if (body.export || body.concatFinals != null) {
+        setProjectExportSettings(projectId, body.export || {}, {
+          concatFinals: body.concatFinals,
+        });
+      }
+      const existing = listJobs({ projectId, activeOnly: true, limit: 20 })
+        .find((j) => j.type === 'export-all');
+      if (existing) {
+        json(res, 202, { ok: true, job: publicJob(existing), resumed: true });
+        return;
+      }
+      const job = createJob('export-all', { projectId, concatOnly: !!body.concatOnly });
+      startJob(job.id, async (j) => {
+        updateJob(j.id, { message: 'Projekt-Export startet…', progress: 0.01 });
+        const result = await renderProjectFinals(projectId, {
+          concatOnly: !!body.concatOnly,
+          onLog: (line) => appendJobLog(j.id, line),
+          onProgress: (ev) => {
+            updateJob(j.id, {
+              progress: ev.progress != null ? ev.progress : getJob(j.id)?.progress,
+              message: ev.message || getJob(j.id)?.message,
+              meta: {
+                ...(getJob(j.id)?.meta || j.meta || {}),
+                phase: ev.type,
+                takeId: ev.takeId,
+                current: ev.index != null ? ev.index + 1 : undefined,
+                total: ev.total,
+              },
+            });
+          },
+        });
+        updateJob(j.id, {
+          message: result.session
+            ? `Fertig: ${result.session.path}`
+            : `Fertig: ${result.exported.length} Flats`,
+          progress: 1,
+        });
+        return result;
+      });
+      json(res, 202, { ok: true, job: publicJob(job) });
       return;
     }
 
@@ -670,24 +768,54 @@ const server = http.createServer(async (req, res) => {
       } catch {
         body = {};
       }
-      const result = await analyzeSuggestions(videoPath, {
-        defaultPreset: body.defaultPreset || 'forward',
-        pausePreset: body.pausePreset || 'selfie',
-        fps: body.fps || 2,
-        enableCalm: body.enableCalm,
-        enableValleys: body.enableValleys,
-        enableSkin: body.enableSkin,
-        enableSpikes: body.enableSpikes,
-        calmStrictness: body.calmStrictness,
-        minCalmSec: body.minCalmSec,
-        minSkinPct: body.minSkinPct,
-        skinStepSec: body.skinStepSec,
-        minConfidence: body.minConfidence,
-        proposedMinConfidence: body.proposedMinConfidence,
+      // One analyze at a time (shared job map)
+      const already = listJobs({ activeOnly: true, limit: 20 })
+        .find((j) => j.type === 'suggest' && j.meta?.videoPath === videoPath);
+      if (already) {
+        json(res, 202, { ok: true, async: true, job: publicJob(already), resumed: true });
+        return;
+      }
+      const job = createJob('suggest', {
+        projectId: session.projectId,
+        takeId: session.takeId,
+        videoPath,
       });
-      const suggestPath = `${videoPath}.suggestions.json`;
-      fs.writeFileSync(suggestPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
-      json(res, 200, { ok: true, path: suggestPath, ...result });
+      startJob(job.id, async (j) => {
+        updateJob(j.id, { message: 'Analyse startet…', progress: 0.01 });
+        const result = await analyzeSuggestions(videoPath, {
+          defaultPreset: body.defaultPreset || 'forward',
+          pausePreset: body.pausePreset || 'selfie',
+          fps: body.fps || 2,
+          enableCalm: body.enableCalm,
+          enableValleys: body.enableValleys,
+          enableSkin: body.enableSkin,
+          enableSpikes: body.enableSpikes,
+          calmStrictness: body.calmStrictness,
+          minCalmSec: body.minCalmSec,
+          minSkinPct: body.minSkinPct,
+          skinStepSec: body.skinStepSec,
+          minConfidence: body.minConfidence,
+          proposedMinConfidence: body.proposedMinConfidence,
+          onProgress: (ev) => {
+            const cur = getJob(j.id);
+            updateJob(j.id, {
+              progress: ev.progress != null ? ev.progress : cur?.progress,
+              message: ev.message || cur?.message,
+              meta: {
+                ...(cur?.meta || j.meta || {}),
+                phase: ev.phase,
+                current: ev.current,
+                total: ev.total,
+              },
+            });
+          },
+        });
+        const suggestPath = `${videoPath}.suggestions.json`;
+        fs.writeFileSync(suggestPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+        updateJob(j.id, { message: 'Analyse fertig', progress: 1 });
+        return { path: suggestPath, ...result };
+      });
+      json(res, 202, { ok: true, async: true, job: publicJob(job) });
       return;
     }
 

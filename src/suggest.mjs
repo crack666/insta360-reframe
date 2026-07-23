@@ -56,7 +56,12 @@ function runBinary(cmd, args) {
   });
 }
 
-async function extractMotionSeries(videoPath, { fps = 2, width = 160 } = {}) {
+async function extractMotionSeries(videoPath, {
+  fps = 2,
+  width = 160,
+  durationSec = 0,
+  onProgress = null,
+} = {}) {
   const one = await runBinary('ffmpeg', [
     '-v', 'error',
     '-i', videoPath,
@@ -69,24 +74,64 @@ async function extractMotionSeries(videoPath, { fps = 2, width = 160 } = {}) {
   const frameSize = one.length;
   if (!frameSize) throw new Error('Could not decode a sample frame for motion analysis');
 
-  const buf = await runBinary('ffmpeg', [
-    '-v', 'error',
-    '-i', videoPath,
-    '-vf', `fps=${fps},scale=${width}:-1,format=gray`,
-    '-f', 'rawvideo',
-    '-pix_fmt', 'gray',
-    'pipe:1',
-  ]);
+  const expected = durationSec > 0 ? Math.max(1, Math.ceil(durationSec * fps) + 2) : 0;
 
-  const nFrames = Math.floor(buf.length / frameSize);
-  const scores = [];
-  let prev = null;
-  for (let i = 0; i < nFrames; i++) {
-    const frame = buf.subarray(i * frameSize, (i + 1) * frameSize);
-    const motion = prev ? mad(prev, frame) : 0;
-    scores.push({ t: i / fps, motion });
-    prev = frame;
-  }
+  const { scores } = await new Promise((resolve, reject) => {
+    const child = spawn('ffmpeg', [
+      '-v', 'error',
+      '-i', videoPath,
+      '-vf', `fps=${fps},scale=${width}:-1,format=gray`,
+      '-f', 'rawvideo',
+      '-pix_fmt', 'gray',
+      'pipe:1',
+    ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+
+    const scores = [];
+    let pending = Buffer.alloc(0);
+    let prev = null;
+    let i = 0;
+    let stderr = '';
+    let lastEmit = 0;
+
+    const emit = (force = false) => {
+      if (!onProgress) return;
+      const now = Date.now();
+      if (!force && now - lastEmit < 200) return;
+      lastEmit = now;
+      const total = expected || Math.max(i, 1);
+      onProgress({
+        phase: 'motion',
+        current: i,
+        total,
+        progress: Math.min(0.72, (i / total) * 0.72),
+        message: `Bewegung ${i}/${expected || '?'}`,
+      });
+    };
+
+    child.stdout.on('data', (d) => {
+      pending = Buffer.concat([pending, d]);
+      while (pending.length >= frameSize) {
+        const frame = Buffer.from(pending.subarray(0, frameSize));
+        pending = pending.subarray(frameSize);
+        const motion = prev ? mad(prev, frame) : 0;
+        scores.push({ t: i / fps, motion });
+        prev = frame;
+        i += 1;
+        if (i === 1 || i % 4 === 0) emit(false);
+      }
+    });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg exited ${code}\n${stderr.slice(-1500)}`));
+        return;
+      }
+      emit(true);
+      resolve({ scores, fps, frameSize });
+    });
+  });
+
   return { scores, fps, frameSize };
 }
 
@@ -147,11 +192,13 @@ function num(v, fallback) {
 /**
  * @param {string} videoPath
  * @param {object} [opts]
+ * @param {(ev: object) => void} [opts.onProgress]
  */
 export async function analyzeSuggestions(videoPath, opts = {}) {
   const defaultPreset = opts.defaultPreset || 'forward';
   const pausePreset = opts.pausePreset || 'selfie';
   const fps = num(opts.fps, 2);
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
 
   const enableCalm = bool(opts.enableCalm, true);
   const enableValleys = bool(opts.enableValleys, false);
@@ -166,11 +213,25 @@ export async function analyzeSuggestions(videoPath, opts = {}) {
   const minConfidence = Math.max(0, Math.min(1, num(opts.minConfidence, 0.45)));
   const proposedMinConfidence = Math.max(0, Math.min(1, num(opts.proposedMinConfidence, 0.55)));
 
+  onProgress?.({ phase: 'probe', current: 0, total: 1, progress: 0.01, message: 'Dauer prüfen…' });
   const duration = await probeDuration(videoPath);
   const presets = loadPresets();
   const selfieView = presets[pausePreset] || presets.selfie;
+  const motionTotal = Math.max(1, Math.ceil(duration * fps));
 
-  const { scores } = await extractMotionSeries(videoPath, { fps, width: 160 });
+  onProgress?.({
+    phase: 'motion',
+    current: 0,
+    total: motionTotal,
+    progress: 0.02,
+    message: `Bewegung 0/${motionTotal}`,
+  });
+  const { scores } = await extractMotionSeries(videoPath, {
+    fps,
+    width: 160,
+    durationSec: duration,
+    onProgress,
+  });
   if (scores.length < 4) {
     return {
       duration,
@@ -198,7 +259,15 @@ export async function analyzeSuggestions(videoPath, opts = {}) {
   const suggestions = [];
 
   if (enableCalm) {
+    onProgress?.({
+      phase: 'calm',
+      current: 0,
+      total: scores.length,
+      progress: 0.74,
+      message: 'Ruhe-Abschnitte auswerten…',
+    });
     let i = 1;
+    let calmHits = 0;
     while (i < scores.length) {
       if (scores[i].motion <= pauseThresh) {
         let j = i;
@@ -223,6 +292,14 @@ export async function analyzeSuggestions(videoPath, opts = {}) {
               ? `Ruhig ${dur.toFixed(1)}s + Selfie-Sektor Haut~${Math.round(skin * 100)}%`
               : `Ruhiger Abschnitt ${dur.toFixed(1)}s (wenig Bildbewegung) → ${pausePreset}`,
             skin: Number(skin.toFixed(3)),
+          });
+          calmHits += 1;
+          onProgress?.({
+            phase: 'calm',
+            current: j,
+            total: scores.length,
+            progress: 0.74 + Math.min(0.08, calmHits * 0.005),
+            message: `Ruhe-Check #${calmHits} @ ${t0.toFixed(0)}s`,
           });
         }
         i = j;
@@ -253,7 +330,20 @@ export async function analyzeSuggestions(videoPath, opts = {}) {
   }
 
   if (enableSkin && selfieView) {
-    for (let t = 1; t < duration; t += skinStepSec) {
+    const skinTimes = [];
+    for (let t = 1; t < duration; t += skinStepSec) skinTimes.push(t);
+    const skinTotal = Math.max(1, skinTimes.length);
+    for (let si = 0; si < skinTimes.length; si++) {
+      const t = skinTimes[si];
+      if (si === 0 || si % 2 === 0 || si === skinTimes.length - 1) {
+        onProgress?.({
+          phase: 'skin',
+          current: si + 1,
+          total: skinTotal,
+          progress: 0.82 + ((si + 1) / skinTotal) * 0.15,
+          message: `Selfie-Check ${si + 1}/${skinTotal}`,
+        });
+      }
       const skin = await selfieSkinAt(videoPath, t, { ...selfieView, name: pausePreset });
       if (skin >= minSkinPct) {
         const t0 = Math.max(0, t - 1);
@@ -272,6 +362,14 @@ export async function analyzeSuggestions(videoPath, opts = {}) {
       }
     }
   }
+
+  onProgress?.({
+    phase: 'finalize',
+    current: 1,
+    total: 1,
+    progress: 0.98,
+    message: 'Vorschläge zusammenfassen…',
+  });
 
   if (enableSpikes) {
     for (let k = 2; k < scores.length - 1; k++) {

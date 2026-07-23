@@ -231,9 +231,10 @@ Legende: `[ ]` offen · `[~]` teilweise · `[x]` erledigt
 
 **Ziel:** „Ein Lauf = mehrere Takes“.
 
-- [ ] Projekt-Übersicht: Take-Liste, Status-Badges, Reorder
-- [ ] „Alle Proxies erzeugen“ / „Alle Finals“
-- [ ] Optional: Session-Concat der Flats in Reihenfolge → `out/session.mp4`
+- [x] Projekt-Übersicht: Take-Liste, Status-Badges, Reorder
+- [ ] „Alle Proxies erzeugen“
+- [x] „Alle Finals“ / Flats + Session-Concat (`out/session.mp4`) — Proxy-Quelle
+- [x] Projekt-Export-Settings (Auflösung/Codec/Qualität) auf Projektseite
 - [ ] Skip/Retry einzelner Takes
 
 **Exit:** Multi-Take-Session ohne manuelles Concat-CLI.

@@ -69,10 +69,64 @@ export function emptyProject(id, label = id) {
     created: new Date().toISOString(),
     updated: new Date().toISOString(),
     takes: [],
-    concatFinals: false,
+    /** After all take flats: write projects/<id>/out/session.mp4 */
+    concatFinals: true,
+    export: defaultExportSettings(),
     /** Copied onto new takes as starting viewOffset (optional). */
     defaultViewOffset: { yaw: 0, pitch: 0, roll: 0 },
   };
+}
+
+export function defaultExportSettings() {
+  return {
+    width: 1920,
+    height: 1080,
+    codec: 'h264',
+    quality: 'medium',
+    bitrate: null,
+    audioBitrate: null,
+  };
+}
+
+export function normalizeExportSettings(raw = {}) {
+  const d = defaultExportSettings();
+  const width = Math.max(160, Number(raw.width) || d.width);
+  const height = Math.max(90, Number(raw.height) || d.height);
+  const codec = String(raw.codec || d.codec).toLowerCase() === 'hevc' ? 'hevc' : 'h264';
+  const q = String(raw.quality || d.quality).toLowerCase();
+  const quality = (q === 'draft' || q === 'high') ? q : 'medium';
+  const bitrate = raw.bitrate != null && String(raw.bitrate).trim()
+    ? String(raw.bitrate).trim()
+    : null;
+  const audioBitrate = raw.audioBitrate != null && String(raw.audioBitrate).trim()
+    ? String(raw.audioBitrate).trim()
+    : null;
+  return { width, height, codec, quality, bitrate, audioBitrate };
+}
+
+export function projectPaths(projectId, root = getInstaRoot()) {
+  const projectDir = path.join(projectsDir(root), projectId);
+  return {
+    projectDir,
+    projectJson: path.join(projectDir, 'project.json'),
+    outDir: path.join(projectDir, 'out'),
+    sessionMp4: path.join(projectDir, 'out', 'session.mp4'),
+  };
+}
+
+export function getProjectExportSettings(project) {
+  return normalizeExportSettings(project?.export || {});
+}
+
+export function setProjectExportSettings(projectId, partial = {}, {
+  root = getInstaRoot(),
+  concatFinals,
+} = {}) {
+  const { project } = loadProject(projectId, root);
+  project.export = normalizeExportSettings({ ...getProjectExportSettings(project), ...partial });
+  if (concatFinals != null) project.concatFinals = !!concatFinals;
+  saveProject(project, root);
+  return project;
 }
 
 export function emptyTake(id, { raw = [], label, viewOffset } = {}) {

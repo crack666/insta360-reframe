@@ -101,6 +101,25 @@ button.ghost { background: transparent; }
 button.danger-outline { border-color: #6a4040; }
 
 .job-box { margin-top: 14px; padding-top: 10px; border-top: 1px solid #2a3142; }
+
+.export-project {
+  margin-top: 22px;
+  padding: 14px 16px;
+  border: 1px solid #2c3344;
+  border-radius: 10px;
+  background: rgba(14, 17, 24, 0.55);
+}
+.export-project h3 { margin: 0 0 6px; font-size: 15px; }
+.export-project .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.export-project label { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.export-project label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  color: var(--text);
+}
+.export-project button.active { background: #1e4a73; border-color: var(--home-accent); }
 .home-foot { margin-top: 8px; }
 
 dialog {

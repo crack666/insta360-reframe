@@ -1422,10 +1422,27 @@ function bindAnalyzeOptionLabels() {
   sync();
 }
 
+async function pollSuggestJob(jobId) {
+  for (;;) {
+    const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+    const doc = await r.json();
+    if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
+    const job = doc.job;
+    const pct = Math.round((job.progress || 0) * 100);
+    const cur = job.meta?.current;
+    const tot = job.meta?.total;
+    const count = (cur != null && tot != null) ? ` · ${cur}/${tot}` : '';
+    el.status.textContent = `${job.message || 'Analysiere…'}${count}${pct ? ` (${pct}%)` : ''}`;
+    if (job.status === 'done') return job.result || {};
+    if (job.status === 'error') throw new Error(job.error || job.message || 'Analyse fehlgeschlagen');
+    await new Promise((res) => setTimeout(res, 400));
+  }
+}
+
 el.analyze.addEventListener('click', async () => {
   el.analyze.disabled = true;
   const opts = readAnalyzeOptions();
-  el.status.textContent = 'Analysiere… (Parameter werden mitgeschickt)';
+  el.status.textContent = 'Analyse starten…';
   try {
     const r = await fetch('/api/suggest', {
       method: 'POST',
@@ -1434,14 +1451,18 @@ el.analyze.addEventListener('click', async () => {
     });
     const doc = await r.json();
     if (!r.ok || !doc.ok) throw new Error(doc.error || r.status);
-    suggestions = doc.suggestions || [];
-    proposedSegments = doc.proposed || null;
+    let result = doc;
+    if (doc.async && doc.job?.id) {
+      result = await pollSuggestJob(doc.job.id);
+    }
+    suggestions = result.suggestions || [];
+    proposedSegments = result.proposed || null;
     dismissed.clear();
     renderSuggestions();
     drawScrubber();
     const nSelfie = suggestions.filter(isSelfieSuggestion).length;
     el.status.textContent = `Fertig: ${nSelfie} Selfie-Vorschläge, ${suggestions.length - nSelfie} Spikes`
-      + (doc.options ? ` · Strenge ${doc.options.calmStrictness}` : '');
+      + (result.options ? ` · Strenge ${result.options.calmStrictness}` : '');
   } catch (err) {
     el.status.textContent = `Analyse fehlgeschlagen: ${err.message || err}`;
   } finally {

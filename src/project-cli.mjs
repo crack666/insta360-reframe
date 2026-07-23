@@ -28,7 +28,7 @@ import {
   resolveStitchBackend,
   resolveWindowsMediaSdk,
 } from './stitch.mjs';
-import { renderFinal, importTimeline } from './final.mjs';
+import { renderFinal, renderProjectFinals, importTimeline } from './final.mjs';
 
 function usage() {
   console.log(`
@@ -44,6 +44,7 @@ insta360-reframe project CLI
   set-proxy <project> <take> --file <equirect.mp4>
   import-timeline <project> <take> --from <timeline.json|txt>
   final <project> <take> [--use-proxy-as-master] [--keep-master]
+  export-all <project> [--concat-only]
   status <project> [take]
 
 Root: ${getInstaRoot()}  (override INSTA360_ROOT)
@@ -65,6 +66,7 @@ function parseArgs(argv) {
     else if (x === '--file' || x === '--from') flags.file = a[++i];
     else if (x === '--use-proxy-as-master') flags.useProxyAsMaster = true;
     else if (x === '--keep-master') flags.keepMaster = true;
+    else if (x === '--concat-only') flags.concatOnly = true;
     else if (x === '--backend') flags.backend = a[++i];
     else if (x === '-h' || x === '--help') flags.help = true;
     else if (!x.startsWith('-')) positional.push(x);
@@ -188,6 +190,21 @@ async function main() {
       },
     });
     console.log(`final: ${r.output} (${(r.size / 1e6).toFixed(1)} MB) status=${r.take.status}`);
+    return;
+  }
+
+  if (cmd === 'export-all') {
+    const [projectId] = positional;
+    if (!projectId) throw new Error('export-all <project> [--concat-only]');
+    const r = await renderProjectFinals(projectId, {
+      concatOnly: !!flags.concatOnly,
+      onLog: log,
+      onProgress: (ev) => {
+        if (ev.message) log(ev.message);
+      },
+    });
+    console.log(`exported: ${r.exported.length}  skipped: ${r.skipped.length}`);
+    if (r.session) console.log(`session: ${r.session.path} (${(r.session.size / 1e6).toFixed(1)} MB)`);
     return;
   }
 

@@ -17,11 +17,25 @@ const el = {
   jobBar: document.getElementById('jobBar'),
   jobMsg: document.getElementById('jobMsg'),
   jobLog: document.getElementById('jobLog'),
+  projExportRes: document.getElementById('projExportRes'),
+  projExportCodec: document.getElementById('projExportCodec'),
+  projExportQuality: document.getElementById('projExportQuality'),
+  projConcatFinals: document.getElementById('projConcatFinals'),
+  projSessionPath: document.getElementById('projSessionPath'),
+  btnExportAll: document.getElementById('btnExportAll'),
+  btnConcatOnly: document.getElementById('btnConcatOnly'),
+  btnSaveExportSettings: document.getElementById('btnSaveExportSettings'),
 };
 
 let currentProjectId = null;
 let pollTimer = null;
 let pollingJobId = null;
+const projExport = {
+  width: 1920,
+  height: 1080,
+  codec: 'h264',
+  quality: 'medium',
+};
 
 function jobStorageKey(projectId, takeId) {
   return `insta360.job.${projectId}.${takeId}`;
@@ -255,9 +269,11 @@ async function refreshProject({ skipResume = false } = {}) {
   if (!currentProjectId) return;
   const doc = await api(`/api/projects/${encodeURIComponent(currentProjectId)}`);
   el.projectTitle.textContent = doc.project.label || doc.project.id;
+  applyProjExportUi(doc.project?.export || {}, doc.sessionPath, doc.project?.concatFinals !== false);
   el.takeList.innerHTML = '';
   if (!doc.takes.length) {
     el.takeList.innerHTML = '<p class="hint">Noch keine Takes — rechts aus der Inbox hinzufügen.</p>';
+    if (!skipResume) await resumeActiveJobs([]);
     return;
   }
   for (const t of doc.takes) {
@@ -415,6 +431,120 @@ async function openEditor(takeId) {
   );
   window.location.href = doc.editUrl || `/edit?project=${currentProjectId}&take=${takeId}`;
 }
+
+function bindToggleGroup(container, onPick) {
+  if (!container) return;
+  container.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn || btn.disabled) return;
+    for (const b of container.querySelectorAll('button')) b.classList.remove('active');
+    btn.classList.add('active');
+    onPick(btn);
+  });
+}
+
+function applyProjExportUi(settings = {}, sessionPath = '', concatFinals = true) {
+  projExport.width = Number(settings.width) || 1920;
+  projExport.height = Number(settings.height) || 1080;
+  projExport.codec = settings.codec === 'hevc' ? 'hevc' : 'h264';
+  projExport.quality = ['draft', 'high'].includes(settings.quality) ? settings.quality : 'medium';
+  if (el.projConcatFinals) el.projConcatFinals.checked = concatFinals !== false;
+  if (el.projSessionPath) {
+    el.projSessionPath.textContent = sessionPath
+      ? `Ausgabe: ${sessionPath}`
+      : 'Ausgabe: …/out/session.mp4';
+  }
+  const mark = (box, attr, value) => {
+    if (!box) return;
+    for (const b of box.querySelectorAll('button')) {
+      const v = attr === 'data-w'
+        ? String(b.dataset.w) === String(value)
+        : attr === 'data-codec'
+          ? b.dataset.codec === value
+          : b.dataset.q === value;
+      b.classList.toggle('active', v);
+    }
+  };
+  mark(el.projExportRes, 'data-w', projExport.width);
+  // also match height via data-w button that has matching pair
+  if (el.projExportRes) {
+    for (const b of el.projExportRes.querySelectorAll('button')) {
+      b.classList.toggle(
+        'active',
+        Number(b.dataset.w) === projExport.width && Number(b.dataset.h) === projExport.height,
+      );
+    }
+  }
+  mark(el.projExportCodec, 'data-codec', projExport.codec);
+  mark(el.projExportQuality, 'data-q', projExport.quality);
+}
+
+function readProjExportPayload() {
+  return {
+    export: {
+      width: projExport.width,
+      height: projExport.height,
+      codec: projExport.codec,
+      quality: projExport.quality,
+    },
+    concatFinals: !!(el.projConcatFinals?.checked),
+  };
+}
+
+async function saveProjExportSettings() {
+  const body = readProjExportPayload();
+  const doc = await api(
+    `/api/projects/${encodeURIComponent(currentProjectId)}/export-settings`,
+    { method: 'PUT', body: JSON.stringify(body) },
+  );
+  applyProjExportUi(doc.export, el.projSessionPath?.textContent?.replace(/^Ausgabe:\s*/, ''), doc.concatFinals);
+  el.status.textContent = `Export-Settings gespeichert (${doc.export.width}×${doc.export.height} ${doc.export.codec} ${doc.export.quality})`;
+}
+
+async function startProjectExport({ concatOnly = false } = {}) {
+  const body = { ...readProjExportPayload(), concatOnly };
+  el.status.textContent = concatOnly ? 'Zusammenfügen…' : 'Projekt-Export startet…';
+  const doc = await api(
+    `/api/projects/${encodeURIComponent(currentProjectId)}/export-all`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  if (doc.job?.id) {
+    showJob(doc.job);
+    pollJob(doc.job.id, async (job) => {
+      if (job.status === 'done') {
+        const session = job.result?.session?.path;
+        el.status.textContent = session
+          ? `Session fertig → ${session}`
+          : `Export fertig (${job.result?.exported?.length || 0} Flats)`;
+        await refreshProject({ skipResume: true });
+      } else {
+        el.status.textContent = job.message || 'Export fehlgeschlagen';
+        await refreshProject({ skipResume: true });
+      }
+    });
+  }
+}
+
+bindToggleGroup(el.projExportRes, (btn) => {
+  projExport.width = Number(btn.dataset.w);
+  projExport.height = Number(btn.dataset.h);
+});
+bindToggleGroup(el.projExportCodec, (btn) => {
+  projExport.codec = btn.dataset.codec;
+});
+bindToggleGroup(el.projExportQuality, (btn) => {
+  projExport.quality = btn.dataset.q;
+});
+
+el.btnSaveExportSettings?.addEventListener('click', () => {
+  saveProjExportSettings().catch((e) => { el.status.textContent = e.message; });
+});
+el.btnExportAll?.addEventListener('click', () => {
+  startProjectExport({ concatOnly: false }).catch((e) => { el.status.textContent = e.message; });
+});
+el.btnConcatOnly?.addEventListener('click', () => {
+  startProjectExport({ concatOnly: true }).catch((e) => { el.status.textContent = e.message; });
+});
 
 function escapeHtml(s) {
   return String(s ?? '')

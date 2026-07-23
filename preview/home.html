@@ -43,6 +43,35 @@
         </div>
       </div>
 
+      <section class="export-project" id="exportProjectBox">
+        <h3>Projekt exportieren</h3>
+        <p class="hint">Einheitliche Settings für alle Takes → Flat pro Take (Proxy + Timeline) → optional ein Session-MP4.</p>
+        <label>Auflösung</label>
+        <div class="row" id="projExportRes">
+          <button type="button" data-w="1280" data-h="720">720p</button>
+          <button type="button" data-w="1920" data-h="1080" class="active">1080p</button>
+          <button type="button" data-w="2560" data-h="1440">1440p</button>
+        </div>
+        <label>Codec</label>
+        <div class="row" id="projExportCodec">
+          <button type="button" data-codec="h264" class="active">H.264</button>
+          <button type="button" data-codec="hevc">H.265 / HEVC</button>
+        </div>
+        <label>Qualität</label>
+        <div class="row" id="projExportQuality">
+          <button type="button" data-q="draft">Draft</button>
+          <button type="button" data-q="medium" class="active">Medium</button>
+          <button type="button" data-q="high">High</button>
+        </div>
+        <label class="check"><input type="checkbox" id="projConcatFinals" checked /> Takes zu einem Session-MP4 zusammenfügen</label>
+        <p class="hint" id="projSessionPath">Ausgabe: …/out/session.mp4</p>
+        <div class="row">
+          <button type="button" id="btnExportAll" class="primary">Alle Flats + zusammenfügen</button>
+          <button type="button" id="btnConcatOnly" title="Nur vorhandene Flats mergen">Nur zusammenfügen</button>
+          <button type="button" id="btnSaveExportSettings">Settings speichern</button>
+        </div>
+      </section>
+
       <div class="job-box" id="jobBox" hidden>
         <div class="export-progress">
           <div class="bar"><div id="jobBar"></div></div>
