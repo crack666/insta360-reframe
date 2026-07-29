@@ -189,6 +189,12 @@ async function runStitchBackend({
 
 /**
  * @param {'proxy'|'final'} profile
+ * @param {object} [opts]
+ * @param {boolean} [opts.flowstate]
+ * @param {boolean} [opts.directionLock]
+ * @param {string} [opts.outputHost] override output path (experiment / alternate file)
+ * @param {boolean} [opts.updateManifest=true] write take.json status/proxy
+ * @param {string} [opts.outputSize] e.g. 1920x960
  */
 export async function stitchTake(projectId, takeId, {
   profile = 'proxy',
@@ -196,22 +202,32 @@ export async function stitchTake(projectId, takeId, {
   backend,
   onLog,
   keepOutput = true,
+  flowstate,
+  directionLock,
+  outputHost: outputOverride,
+  outputSize: sizeOverride,
+  updateManifest = true,
 } = {}) {
   const { take, paths } = loadTake(projectId, takeId, root);
   if (!take.raw?.length) throw new Error('Take has no raw .insv paths');
 
   const isProxy = profile === 'proxy';
-  const outputHost = isProxy ? paths.proxyMp4 : paths.masterMp4;
-  const outputSize = isProxy
-    ? (take.stitch?.proxyOutputSize || '1920x960')
-    : (take.stitch?.finalOutputSize || suggestFinalOutputSize(take.final?.width || 1920));
+  const outputHost = outputOverride || (isProxy ? paths.proxyMp4 : paths.masterMp4);
+  const outputSize = sizeOverride
+    || (isProxy
+      ? (take.stitch?.proxyOutputSize || '1920x960')
+      : (take.stitch?.finalOutputSize || suggestFinalOutputSize(take.final?.width || 1920)));
 
   const resolvedBackend = resolveStitchBackend({ backend, root });
+  const useFlowstate = flowstate != null ? !!flowstate : take.stitch?.flowstate !== false;
+  const useDirectionLock = directionLock != null ? !!directionLock : take.stitch?.directionLock !== false;
 
-  take.status = isProxy ? 'stitching_proxy' : 'rendering_final';
-  take.error = null;
-  take.stitch = { ...take.stitch, lastBackend: resolvedBackend };
-  saveTake(projectId, take, root);
+  if (updateManifest) {
+    take.status = isProxy ? 'stitching_proxy' : 'rendering_final';
+    take.error = null;
+    take.stitch = { ...take.stitch, lastBackend: resolvedBackend };
+    saveTake(projectId, take, root);
+  }
 
   if (fs.existsSync(outputHost)) fs.unlinkSync(outputHost);
 
@@ -221,47 +237,67 @@ export async function stitchTake(projectId, takeId, {
       inputsHost: take.raw,
       outputHost,
       outputSize,
-      flowstate: take.stitch?.flowstate !== false,
-      directionLock: take.stitch?.directionLock !== false,
+      flowstate: useFlowstate,
+      directionLock: useDirectionLock,
       root,
       onLog,
     });
   } catch (err) {
-    const { take: t } = loadTake(projectId, takeId, root);
-    t.status = 'error';
-    t.error = String(err.message || err);
-    saveTake(projectId, t, root);
+    if (updateManifest) {
+      const { take: t } = loadTake(projectId, takeId, root);
+      t.status = 'error';
+      t.error = String(err.message || err);
+      saveTake(projectId, t, root);
+    }
     throw err;
   }
 
-  const { take: after } = loadTake(projectId, takeId, root);
   if (!fs.existsSync(outputHost)) {
-    after.status = 'error';
-    after.error = `Stitch finished but output missing: ${outputHost}`;
-    saveTake(projectId, after, root);
-    throw new Error(after.error);
+    const msg = `Stitch finished but output missing: ${outputHost}`;
+    if (updateManifest) {
+      const { take: after } = loadTake(projectId, takeId, root);
+      after.status = 'error';
+      after.error = msg;
+      saveTake(projectId, after, root);
+    }
+    throw new Error(msg);
   }
 
-  const [w, h] = String(outputSize).split('x').map(Number);
-  if (isProxy) {
-    after.proxy = {
-      path: outputHost,
-      width: w || null,
-      height: h || null,
+  if (updateManifest) {
+    const { take: after } = loadTake(projectId, takeId, root);
+    const [w, h] = String(outputSize).split('x').map(Number);
+    if (isProxy) {
+      after.proxy = {
+        path: outputHost,
+        width: w || null,
+        height: h || null,
+        outputSize,
+        backend: resolvedBackend,
+      };
+      after.status = 'proxy_ready';
+    } else {
+      after._lastMaster = outputHost;
+    }
+    saveTake(projectId, after, root);
+    return {
+      take: after,
+      outputHost,
       outputSize,
+      profile,
       backend: resolvedBackend,
+      flowstate: useFlowstate,
+      directionLock: useDirectionLock,
     };
-    after.status = 'proxy_ready';
-  } else {
-    after._lastMaster = outputHost;
   }
-  saveTake(projectId, after, root);
+
   return {
-    take: after,
+    take,
     outputHost,
     outputSize,
     profile,
     backend: resolvedBackend,
+    flowstate: useFlowstate,
+    directionLock: useDirectionLock,
   };
 }
 

@@ -45,6 +45,7 @@ import {
 } from './project.mjs';
 import { stitchTake, setProxyFile } from './stitch.mjs';
 import { renderProjectFinals } from './final.mjs';
+import { alignTakesOptical } from './align-optical.mjs';
 import {
   createJob,
   getJob,
@@ -552,6 +553,23 @@ const server = http.createServer(async (req, res) => {
       }
       const take = copyTakeViewOffset(projectId, String(body.fromTake), takeId);
       json(res, 200, { ok: true, take, viewOffset: take.viewOffset });
+      return;
+    }
+
+    const alignOpticalMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/align-optical$/);
+    if (alignOpticalMatch && method === 'POST') {
+      const projectId = decodeURIComponent(alignOpticalMatch[1]);
+      try {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const out = await alignTakesOptical(projectId, {
+          refId: String(body.refTakeId || body.ref || body.refId || '009'),
+          tSec: Number(body.tSec ?? body.t ?? 1) || 1,
+          apply: body.apply !== false && body.dryRun !== true,
+        });
+        json(res, 200, { ok: true, ...out });
+      } catch (err) {
+        json(res, 400, { ok: false, error: String(err.message || err) });
+      }
       return;
     }
 
